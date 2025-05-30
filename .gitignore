@@ -42,10 +42,6 @@ yarn-error.log*
 Thumbs.db
 ehthumbs.db
 
-# Prisma
-packages/backend/prisma/dev.db
-packages/backend/prisma/dev.db-journal
-
 # Next.js specific
 .next/
 
