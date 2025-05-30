@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "composite": true, // Required for project references
+    "module": "commonjs", // Or "ESNext" if you prefer ES modules for backend
+    "types": ["node", "express"], // Add types for Node.js and Express
+    "emitDecoratorMetadata": true, // Required for TypeORM or similar decorators
+    "experimentalDecorators": true // Required for TypeORM or similar decorators
+  },
+  "include": ["src", "prisma"],
+  "exclude": ["node_modules", "dist"]
+}

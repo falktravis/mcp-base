@@ -1,0 +1,57 @@
+// packages/frontend/src/styles/globals.scss
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+@import 'variables'; // Your custom SCSS variables
+
+// Global styles and overrides
+body {
+  font-family: $font-family-sans-serif;
+  color: $text-color;
+  background-color: $background-color;
+  line-height: 1.6;
+}
+
+a {
+  color: $primary-color;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+// Example: Custom global component style
+// .custom-button {
+//   background-color: $primary-color;
+//   color: white;
+//   padding: 10px 15px;
+//   border: none;
+//   border-radius: $border-radius;
+//   cursor: pointer;
+//
+//   &:hover {
+//     background-color: darken($primary-color, 10%);
+//   }
+// }
+
+// Utility classes (optional, Tailwind provides many utilities)
+.container {
+  width: 90%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 15px;
+}
+
+// You can add more global styles or overrides here.
+// For example, resetting default margins/paddings for certain elements,
+// or defining base typography styles for headings.
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: $font-family-serif;
+  color: $secondary-color;
+  margin-bottom: 0.5em;
+}
+
+// Ensure Tailwind directives are processed correctly
+// by keeping them at the top or as per Next.js/Tailwind documentation for SCSS.
