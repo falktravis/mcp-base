@@ -4,6 +4,15 @@
 import React, { useState } from 'react';
 // import AddServerModal from '@/components/servers/AddServerModal'; // Placeholder for modal component
 
+// Import the NewServerData type
+export interface NewServerData {
+  name: string;
+  host: string;
+  port: number;
+  type: string;
+  description?: string;
+}
+
 /**
  * @page ServersPage
  * @description Page for listing, managing, and monitoring MCP servers.
@@ -43,13 +52,10 @@ const mockServers = [
   },
 ];
 
-const ServersPage: React.FC = () => {
-  const [servers, setServers] = useState(mockServers);
+const ServersPage: React.FC = () => {  const [servers, setServers] = useState(mockServers);
   const [isModalOpen, setIsModalOpen] = useState(false);
-
   console.log('ServersPage: Rendering with servers:', servers);
-
-  const handleAddServer = (newServer: any) => {
+  const handleAddServer = (newServer: NewServerData) => {
     // Placeholder: This would typically involve an API call
     console.log('ServersPage: Adding new server:', newServer);
     // setServers(prev => [...prev, { ...newServer, id: `server-${Date.now()}` }]);
@@ -178,9 +184,12 @@ const ServersPage: React.FC = () => {
                     className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded mr-2"
                 >
                     Close
-                </button>
-                <button 
-                    onClick={handleAddServer} 
+                </button>                <button 
+                    onClick={() => {
+                      // Placeholder: When real modal is implemented, this will call handleAddServer with form data
+                      alert('Add server functionality not yet implemented.');
+                      setIsModalOpen(false);
+                    }} 
                     className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
                 >
                     Add Server

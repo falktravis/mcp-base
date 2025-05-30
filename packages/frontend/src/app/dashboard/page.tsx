@@ -47,11 +47,10 @@ const DashboardPage: React.FC = () => {
         </div>
 
         <div className="bg-white p-6 rounded-lg shadow-md col-span-1 md:col-span-2">
-          <h2 className="text-xl font-semibold text-gray-700 mb-2">Recent Activity</h2>
-          <ul className="text-gray-600">
-            <li className="py-1 border-b border-gray-200">Server 'Alpha' started.</li>
-            <li className="py-1 border-b border-gray-200">New API key generated for 'UserX'.</li>
-            <li className="py-1">Traffic spike detected on 'Gateway-1'.</li>
+          <h2 className="text-xl font-semibold text-gray-700 mb-2">Recent Activity</h2>          <ul className="text-gray-600">
+            <li className="py-1 border-b border-gray-200">Server &apos;Alpha&apos; started.</li>
+            <li className="py-1 border-b border-gray-200">New API key generated for &apos;UserX&apos;.</li>
+            <li className="py-1">Traffic spike detected on &apos;Gateway-1&apos;.</li>
           </ul>
         </div>
       </div>

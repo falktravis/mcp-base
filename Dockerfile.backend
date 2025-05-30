@@ -6,47 +6,46 @@ FROM node:18-alpine AS base
 # Set working directory
 WORKDIR /usr/src/app
 
-# Install pnpm globally
-RUN npm install -g pnpm
-
 # --- Development Stage ---
 FROM base AS development
 
 # Copy root package.json and lockfile
-COPY package.json pnpm-lock.yaml ./
+COPY package.json package-lock.json ./
 
-# Copy backend and shared-types package.json files
+# Create package directories and copy their manifests
+RUN mkdir -p packages/backend packages/shared-types
 COPY packages/backend/package.json ./packages/backend/
 COPY packages/shared-types/package.json ./packages/shared-types/
-
-# Install all dependencies using pnpm
-RUN pnpm install --frozen-lockfile --filter backend...
 
 # Copy the rest of the monorepo source code
 COPY . .
 
+# Install all dependencies using npm
+RUN npm ci
+
 # Set default command for development (will be overridden by docker-compose)
-CMD [ "pnpm", "run", "dev", "--workspace=backend" ]
+CMD [ "npm", "run", "dev", "--workspace=backend" ]
 
 
 # --- Builder Stage ---
 FROM base AS builder
 
 # Copy root package.json and lockfile
-COPY package.json pnpm-lock.yaml ./
+COPY package.json package-lock.json ./
 
-# Copy backend and shared-types package.json files
+# Create package directories and copy their manifests
+RUN mkdir -p packages/backend packages/shared-types
 COPY packages/backend/package.json ./packages/backend/
 COPY packages/shared-types/package.json ./packages/shared-types/
-
-# Install only production dependencies for backend and its dependencies
-RUN pnpm install --prod --frozen-lockfile --filter backend...
 
 # Copy the rest of the monorepo source code
 COPY . .
 
+# Install only production dependencies for backend and its dependencies
+RUN npm ci
+
 # Build backend (and shared-types as it's a dependency)
-RUN pnpm run build --workspace=backend
+RUN npm run build --workspace=backend
 
 
 # --- Production Stage ---
@@ -59,15 +58,10 @@ COPY package.json ./
 
 # Copy production dependencies from builder stage
 COPY --from=builder /usr/src/app/node_modules ./node_modules
-COPY --from=builder /usr/src/app/packages/backend/node_modules ./packages/backend/node_modules
-COPY --from=builder /usr/src/app/packages/shared-types/node_modules ./packages/shared-types/node_modules
-
 
 # Copy built backend application from builder stage
-COPY --from=builder /usr/src/app/packages/backend/dist ./packages/backend/dist
-COPY --from=builder /usr/src/app/packages/backend/package.json ./packages/backend/package.json
-COPY --from=builder /usr/src/app/packages/shared-types/dist ./packages/shared-types/dist
-COPY --from=builder /usr/src/app/packages/shared-types/package.json ./packages/shared-types/package.json
+COPY --from=builder /usr/src/app/packages/backend ./packages/backend
+COPY --from=builder /usr/src/app/packages/shared-types ./packages/shared-types
 
 
 # Expose port

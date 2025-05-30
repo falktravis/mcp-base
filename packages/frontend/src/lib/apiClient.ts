@@ -1,6 +1,8 @@
 // packages/frontend/src/lib/apiClient.ts
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 // Define the base URL for your backend API
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001/api'; // Adjust port if your backend is different
 

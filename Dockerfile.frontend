@@ -6,51 +6,49 @@ FROM node:18-alpine AS base
 # Set working directory
 WORKDIR /usr/src/app
 
-# Install pnpm globally
-RUN npm install -g pnpm
-
 # --- Development Stage ---
 FROM base AS development
 
 # Copy root package.json and lockfile
-COPY package.json pnpm-lock.yaml ./
+COPY package.json package-lock.json ./
 
-# Copy frontend and shared-types package.json files
+# Create package directories and copy their manifests
+RUN mkdir -p packages/frontend packages/shared-types
 COPY packages/frontend/package.json ./packages/frontend/
 COPY packages/shared-types/package.json ./packages/shared-types/
 
-# Install all dependencies using pnpm
-RUN pnpm install --frozen-lockfile --filter frontend...
+# Install dependencies first
+RUN npm ci
 
 # Copy the rest of the monorepo source code
 COPY . .
 
 # Set default command for development (will be overridden by docker-compose)
-CMD [ "pnpm", "run", "dev", "--workspace=frontend" ]
+CMD [ "npm", "run", "dev", "--workspace=frontend" ]
 
 # --- Builder Stage ---
 FROM base AS builder
 
 # Copy root package.json and lockfile
-COPY package.json pnpm-lock.yaml ./
+COPY package.json package-lock.json ./
 
-# Copy frontend and shared-types package.json files
+# Create package directories and copy their manifests
+RUN mkdir -p packages/frontend packages/shared-types
 COPY packages/frontend/package.json ./packages/frontend/
 COPY packages/shared-types/package.json ./packages/shared-types/
-
-# Install dependencies for frontend and its dependencies
-# We install all dependencies here because Next.js build might need devDependencies
-RUN pnpm install --frozen-lockfile --filter frontend...
 
 # Copy the rest of the monorepo source code
 COPY . .
 
+# Install dependencies for frontend and its dependencies
+RUN npm ci
+
 # Build shared-types first (if it has a build script, and if frontend depends on its build output)
 # Assuming shared-types has a build script defined in its package.json
-RUN pnpm run build --workspace=shared-types
+RUN npm run build --workspace=shared-types
 
 # Build frontend
-RUN pnpm run build --workspace=frontend
+RUN npm run build --workspace=frontend
 
 
 # --- Production Stage ---
@@ -58,31 +56,19 @@ FROM node:18-alpine AS production
 
 WORKDIR /usr/src/app
 
-ENV NODE_ENV production
+ENV NODE_ENV=production
 
 # Copy root package.json (needed for workspace structure)
 COPY package.json ./
-
-# Copy frontend package.json
+# Copy frontend package.json (needed for npm start --workspace=frontend)
 COPY packages/frontend/package.json ./packages/frontend/
 
-# Copy only production dependencies from builder stage for frontend
-# This is a bit tricky with pnpm workspaces and Next.js.
-# A simpler approach for Next.js is to copy the entire .next/standalone output.
-# However, to keep it consistent with backend, we try to manage node_modules.
-# This might need adjustment based on actual Next.js output structure.
-
+# Copy production dependencies from builder stage
 COPY --from=builder /usr/src/app/node_modules ./node_modules
-COPY --from=builder /usr/src/app/packages/frontend/node_modules ./packages/frontend/node_modules
-COPY --from=builder /usr/src/app/packages/shared-types/node_modules ./packages/shared-types/node_modules
-COPY --from=builder /usr/src/app/packages/shared-types/dist ./packages/shared-types/dist/
-COPY --from=builder /usr/src/app/packages/shared-types/package.json ./packages/shared-types/package.json
 
-
-# Copy Next.js build output
-COPY --from=builder /usr/src/app/packages/frontend/.next ./packages/frontend/.next/
-COPY --from=builder /usr/src/app/packages/frontend/public ./packages/frontend/public/
-COPY --from=builder /usr/src/app/packages/frontend/next.config.ts ./packages/frontend/next.config.ts
+# Copy built frontend application and shared-types from builder stage
+COPY --from=builder /usr/src/app/packages/frontend ./packages/frontend
+COPY --from=builder /usr/src/app/packages/shared-types ./packages/shared-types
 
 # Expose port
 EXPOSE 3000
@@ -90,10 +76,5 @@ EXPOSE 3000
 # Set environment variables (can be overridden)
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
-# Start command for Next.js
-# The command depends on whether you are using the standalone output or not.
-# If using standalone: node packages/frontend/server.js
-# If not (more common for custom servers or when not using outputStandalone): pnpm --filter frontend start
-# For this setup, assuming we run the Next.js development server in a "production-like" mode or a custom server.
-# Let's assume `pnpm --filter frontend start` is configured in frontend's package.json to run `next start`
-CMD ["pnpm", "--filter", "frontend", "start"]
+# Start command for frontend
+CMD ["npm", "start", "--workspace=frontend"]

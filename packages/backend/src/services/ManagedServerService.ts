@@ -2,7 +2,7 @@
 // that users add via the MCP Pro UI. It's analogous to MCPHub.js in the mcp-hub reference.
 
 import { query } from '../config/database'; // Import query function
-import { ManagedMcpServer } from '@mcp-pro/shared-types'; // Import ManagedMcpServer type
+import { ManagedMcpServer } from 'shared-types'; // Import ManagedMcpServer type
 // import { McpConnectionWrapper } from './McpConnectionWrapper'; // Assuming this will be refactored or used later
 import { randomBytes } from 'crypto';
 

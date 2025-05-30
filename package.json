@@ -1,22 +1,22 @@
 {
-      "name": "mcp-pro-monorepo",
-      "version": "0.1.0",
-      "private": true,
-      "workspaces": [
-        "packages/*"
-      ],
-      "scripts": {
-        "dev:frontend": "npm run dev --workspace=frontend",
-        "dev:backend": "npm run dev --workspace=backend",
-        "build:frontend": "npm run build --workspace=frontend",
-        "build:backend": "npm run build --workspace=backend",
-        "lint": "eslint . --ext .ts,.tsx,.js",
-        "format": "prettier --write ."
-      },
-      "devDependencies": {
-        "eslint": "^8.0.0",
-        "prettier": "^3.0.0",
-        "typescript": "^5.0.0"
-      }
-    }
+  "name": "mcp-pro-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "dev:backend": "npm run dev --workspace=backend",
+    "build:frontend": "npm run build --workspace=frontend",
+    "build:backend": "npm run build --workspace=backend",
+    "lint": "eslint . --ext .ts,.tsx,.js",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.0.0"
+  }
+}
     

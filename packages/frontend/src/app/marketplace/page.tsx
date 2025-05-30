@@ -2,6 +2,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Image from 'next/image';
 
 /**
  * @page MarketplacePage
@@ -118,10 +119,15 @@ const MarketplacePage: React.FC = () => {
       {isLoading ? (
         <p className="text-center text-gray-500">Loading marketplace items...</p>
       ) : items.length > 0 ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {items.map((item) => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">          {items.map((item) => (
             <div key={item.id} className="bg-white shadow-lg rounded-lg overflow-hidden flex flex-col">
-              <img src={item.iconUrl || 'https://via.placeholder.com/300x200?text=No+Image'} alt={item.name} className="w-full h-48 object-cover"/>
+              <Image 
+                src={item.iconUrl || 'https://via.placeholder.com/300x200?text=No+Image'} 
+                alt={item.name} 
+                width={300} 
+                height={200} 
+                className="w-full h-48 object-cover"
+              />
               <div className="p-4 flex flex-col flex-grow">
                 <h2 className="text-xl font-semibold text-gray-800 mb-1">{item.name}</h2>
                 <p className="text-xs text-gray-500 mb-2">By {item.provider} - v{item.version}</p>

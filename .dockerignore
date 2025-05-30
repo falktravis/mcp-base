@@ -1,0 +1,47 @@
+# Ignore Git history and configuration
+.git/
+.gitignore
+.gitattributes
+
+# Ignore IDE and editor specific files/folders
+.vscode/
+.idea/
+*.swp
+*~
+
+# Ignore OS-specific files
+Thumbs.db
+.DS_Store
+
+# Ignore Node.js dependency folders
+# This is the primary fix for the "unknown file mode" error
+node_modules/
+packages/*/node_modules/
+
+# Ignore log files
+*.log
+npm-debug.log*
+yarn-error.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Ignore local environment configuration files
+# These should be managed via Docker environment variables or secrets
+.env
+.env.*
+# Keep example files if they are part of the repository and useful for users
+!*.env.example
+!packages/*/.env.example
+
+# Ignore TypeScript build cache files
+*.tsbuildinfo
+
+# Ignore build output directories from host builds, as Dockerfiles handle builds internally
+packages/backend/dist/
+packages/frontend/.next/
+packages/frontend/out/
+packages/shared-types/dist/
+
+# If you have other lockfiles and pnpm-lock.yaml is the source of truth
+# package-lock.json
+# yarn.lock

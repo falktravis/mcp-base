@@ -1,13 +1,32 @@
 {
-  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@shared-types/*": ["../shared-types/src/*"]
+    },
     "outDir": "dist",
     "rootDir": "src",
-    "composite": true, // Required for project references
-    "module": "commonjs", // Or "ESNext" if you prefer ES modules for backend
-    "types": ["node", "express"], // Add types for Node.js and Express
-    "emitDecoratorMetadata": true, // Required for TypeORM or similar decorators
-    "experimentalDecorators": true // Required for TypeORM or similar decorators
+    "composite": true,
+    "types": ["node", "express"],
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true
   },
   "include": ["src", "prisma"],
   "exclude": ["node_modules", "dist"]

@@ -1,7 +1,7 @@
 // packages/backend/src/services/ApiKeyService.ts
 import { query } from '../config/database';
 import { randomBytes } from 'crypto';
-import { ApiKey } from '@mcp-pro/shared-types'; // Updated import path
+import { ApiKey } from 'shared-types'; // Updated import path
 
 /**
  * @class ApiKeyService

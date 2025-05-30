@@ -14,7 +14,7 @@ import { useState, useEffect } from 'react';
  * @param {string} endpoint - A dummy endpoint to fetch from.
  * @returns {{ data: T | null, loading: boolean, error: Error | null }}
  */
-export const usePlaceholderData = <T extends any>(endpoint: string): {
+export const usePlaceholderData = <T>(endpoint: string): {
   data: T | null;
   loading: boolean;
   error: Error | null;
@@ -36,11 +36,10 @@ export const usePlaceholderData = <T extends any>(endpoint: string): {
           } as T);
           setError(null);
         } else if (endpoint === 'example/error') {
-          throw new Error('Simulated API error in custom hook.');
-        } else {
+          throw new Error('Simulated API error in custom hook.');        } else {
           setData(null); // Or some default data
         }
-      } catch (e: any) {
+      } catch (e: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
         console.error(`usePlaceholderData: Error fetching data from ${endpoint}`, e);
         setError(e);
         setData(null);

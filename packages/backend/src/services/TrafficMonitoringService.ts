@@ -2,7 +2,7 @@
 // and their outcomes to the PostgreSQL database. It will also provide methods to query this data.
 
 import { query } from '../config/database'; // Import query function
-import { TrafficLog } from '@mcp-pro/shared-types'; // Import TrafficLog type
+import { TrafficLog } from 'shared-types'; // Import TrafficLog type
 import { randomBytes } from 'crypto';
 
 export class TrafficMonitoringService {
