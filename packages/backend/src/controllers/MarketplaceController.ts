@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
-import { marketplaceService, MarketplaceService, MarketplaceItem } from '../services/MarketplaceService';
+import { MarketplaceService, MarketplaceItem } from '../services/MarketplaceService';
 import { 
     ApiResponse,
     PaginatedResponse,
-} from '../../../shared-types/src/api-contracts';
+} from '@shared-types/api-contracts';
 
 // Re-using a similar handler as in ManagementController for consistency
 const handleServiceCall = async <T>(
@@ -84,6 +84,3 @@ export class MarketplaceController {
         );
     }
 }
-
-// Instantiate the controller with the service
-export const marketplaceController = new MarketplaceController(marketplaceService);

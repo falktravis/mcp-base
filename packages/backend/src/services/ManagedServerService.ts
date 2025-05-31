@@ -1,9 +1,8 @@
 // This service will manage the lifecycle and connections to all downstream MCP servers
-// that users add via the MCP Pro UI. It's analogous to MCPHub.js in the mcp-hub reference.
 
 import { v4 as uuidv4 } from 'uuid';
 import db from '../config/database'; // pg.Pool instance
-import { ManagedMcpServer } from '../../../shared-types/src/db-models';
+import { ManagedMcpServer } from '@shared-types/db-models';
 import { 
     RegisterServerRequest, 
     UpdateServerConfigRequest, 
@@ -13,7 +12,7 @@ import {
     PaginatedResponse,
     McpRequestPayload,
     McpResponsePayload
-} from '../../../shared-types/src/api-contracts';
+} from '@shared-types/api-contracts';
 import { McpConnectionWrapper } from './McpConnectionWrapper';
 import { DevWatcher } from './DevWatcher';
 import { spawn, ChildProcess } from 'child_process';
@@ -38,7 +37,7 @@ export class ManagedServerService {
   private async initializeManagedServersFromDB(): Promise<void> {
     logger.info('[ManagedServerService] Initializing managed servers from database...');
     try {
-      const result = await db.query('SELECT * FROM managed_mcp_servers WHERE is_enabled = $1', [true]);
+      const result = await db.query('SELECT * FROM managed_mcp_server WHERE is_enabled = $1', [true]);
       const servers: any[] = result.rows;
       for (const serverRow of servers) {
         const serverModel = this.mapDbRowToManagedMcpServer(serverRow);
@@ -62,11 +61,11 @@ export class ManagedServerService {
         serverType: row.server_type,
         connectionDetails: typeof row.connection_details === 'string' 
             ? JSON.parse(row.connection_details) 
-            : row.connection_details, // Assuming connection_details from DB is valid JSON string or already object
-        mcpOptions: row.mcp_options, // Store as string from DB
+            : row.connection_details,
+        mcpOptions: row.mcp_options,
         status: row.status as ServerStatus || 'unknown',
         isEnabled: row.is_enabled,
-        tags: row.tags, // Store as string from DB (JSON array string)
+        tags: row.tags,
         createdAt: new Date(row.created_at),
         updatedAt: new Date(row.updated_at),
         lastPingedAt: row.last_pinged_at ? new Date(row.last_pinged_at) : undefined,
@@ -206,7 +205,7 @@ export class ManagedServerService {
 
     const params = this.mapManagedMcpServerToDbParams(serverConfig);
     const insertQuery = `
-      INSERT INTO managed_mcp_servers 
+      INSERT INTO managed_mcp_server 
       (id, name, description, server_type, connection_details, mcp_options, status, is_enabled, tags, created_at, updated_at, last_pinged_at, last_error) 
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
     `;
@@ -217,8 +216,8 @@ export class ManagedServerService {
 
   public async getAllServers(page: number = 1, limit: number = 10, statusFilter?: ServerStatus): Promise<PaginatedResponse<ManagedMcpServerDetails>> {
     const offset = (page - 1) * limit;
-    let baseSelectQuery = 'SELECT * FROM managed_mcp_servers';
-    let countQueryStr = 'SELECT COUNT(id) as total FROM managed_mcp_servers';
+    let baseSelectQuery = 'SELECT * FROM managed_mcp_server';
+    let countQueryStr = 'SELECT COUNT(id) as total FROM managed_mcp_server';
     const queryParams: any[] = [];
     const countQueryParams: any[] = [];
 
@@ -255,7 +254,7 @@ export class ManagedServerService {
   }
 
   public async getServerById(serverId: string): Promise<ManagedMcpServerDetails | null> {
-    const result = await db.query('SELECT * FROM managed_mcp_servers WHERE id = $1', [serverId]);
+    const result = await db.query('SELECT * FROM managed_mcp_server WHERE id = $1', [serverId]);
     const serverRow: any = result.rows[0];
     if (!serverRow) {
       return null;
@@ -265,7 +264,7 @@ export class ManagedServerService {
   }
   
   public async getServerConfigForConnection(serverId: string): Promise<ManagedMcpServer | null> {
-    const result = await db.query('SELECT * FROM managed_mcp_servers WHERE id = $1', [serverId]);
+    const result = await db.query('SELECT * FROM managed_mcp_server WHERE id = $1', [serverId]);
     const serverRow: any = result.rows[0];
     if (!serverRow) {
       return null;
@@ -319,7 +318,7 @@ export class ManagedServerService {
         return this.mapManagedMcpServerToDetails(existingServer);
     }
     
-    const updateQuery = `UPDATE managed_mcp_servers SET ${setClauses.join(', ')} WHERE id = $${paramIndex}`;
+    const updateQuery = `UPDATE managed_mcp_server SET ${setClauses.join(', ')} WHERE id = $${paramIndex}`;
     await db.query(updateQuery, queryParams);
 
     const connectionWrapper = this.serverConnections.get(serverId);
@@ -356,7 +355,7 @@ export class ManagedServerService {
     if (this.devWatcher) {
       this.devWatcher.removeServer(serverId);
     }
-    const result = await db.query('DELETE FROM managed_mcp_servers WHERE id = $1', [serverId]);
+    const result = await db.query('DELETE FROM managed_mcp_server WHERE id = $1', [serverId]);
     return (result.rowCount || 0) > 0;
   }
 
@@ -403,7 +402,7 @@ export class ManagedServerService {
         details: statusInfo.error || undefined,
       };
     }
-    const result = await db.query('SELECT status, last_error FROM managed_mcp_servers WHERE id = $1', [serverId]);
+    const result = await db.query('SELECT status, last_error FROM managed_mcp_server WHERE id = $1', [serverId]);
     const serverRow: any = result.rows[0];
     if (serverRow) {
       return {
@@ -430,7 +429,7 @@ export class ManagedServerService {
       
       params.push(serverId); // For WHERE id = $X
 
-      const query = `UPDATE managed_mcp_servers SET ${setClauses} WHERE id = $${params.length}`;
+      const query = `UPDATE managed_mcp_server SET ${setClauses} WHERE id = $${params.length}`;
       await db.query(query, params);
 
     } catch (error) {
@@ -507,8 +506,3 @@ export class ManagedServerService {
     }
   }
 }
-
-export const managedServerService = new ManagedServerService();
-
-// Ensure this line is not duplicated if it already exists from previous steps
-// export default managedServerService; // Or however it's exported/used in index.ts

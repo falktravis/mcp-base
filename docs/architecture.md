@@ -12,7 +12,7 @@ MCP Pro is a web application for managing Model Context Protocol (MCP) servers. 
 - **Backend:** Node.js, Express, TypeScript
 - **Database:** PostgreSQL
 - **Authentication:** NextAuth.js (to be integrated)
-- **Shared Types:** A separate package (`packages/shared-types`) for TypeScript types shared between frontend and backend.
+- **Shared Types:** A separate package (`packages/shared-types`) for TypeScript types shared between frontend and backend. The package exports API contracts and database model types that can be imported using path aliases (`@shared-types/*`).
 - **Deployment:** Docker, Docker Compose
 
 ## Directory Structure (Monorepo)

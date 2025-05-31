@@ -2,12 +2,12 @@
 // It will receive MCP requests, authenticate them (e.g., API Key),
 // and then use ManagedServerService to route the request to the appropriate downstream MCP server.
 
-import { McpRequestPayload, McpResponsePayload, McpError } from '../../../shared-types/src/api-contracts'; // Corrected import path
+import { McpRequestPayload, McpResponsePayload, McpError } from '@shared-types/api-contracts'; // Corrected import path
 import { ManagedServerService } from './ManagedServerService';
 import { ApiKeyService } from './ApiKeyService';
 import { TrafficMonitoringService } from './TrafficMonitoringService';
 import { v4 as uuidv4 } from 'uuid';
-import { ApiKey } from '../../../shared-types/src/db-models'; // Import ApiKey DB model for validateApiKey return type
+import { ApiKey } from '@shared-types/db-models'; // Import ApiKey DB model for validateApiKey return type
 
 const GATEWAY_ERROR_SERVER_ID_PLACEHOLDER = 'GATEWAY_ERROR_NO_SERVER_IDENTIFIED';
 

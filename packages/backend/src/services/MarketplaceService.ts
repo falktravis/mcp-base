@@ -133,5 +133,5 @@ export interface MarketplaceItem {
   iconUrl?: string; // URL for an icon representing the item
 }
 
-// Instantiate the service for export
-export const marketplaceService = new MarketplaceService();
+// Remove the instantiation line as per the change request
+// export const marketplaceService = new MarketplaceService();

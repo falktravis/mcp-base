@@ -23,6 +23,9 @@ RUN npm ci
 # Copy the rest of the monorepo source code
 COPY . .
 
+# Ensure TypeScript base config is always present in the container
+COPY tsconfig.base.json ./tsconfig.base.json
+
 # Set default command for development (will be overridden by docker-compose)
 CMD [ "npm", "run", "dev", "--workspace=frontend" ]
 
@@ -40,11 +43,13 @@ COPY packages/shared-types/package.json ./packages/shared-types/
 # Copy the rest of the monorepo source code
 COPY . .
 
-# Install dependencies for frontend and its dependencies
-RUN npm ci
+# Ensure TypeScript base config is always present in the container
+COPY tsconfig.base.json ./tsconfig.base.json
 
-# Build shared-types first (if it has a build script, and if frontend depends on its build output)
-# Assuming shared-types has a build script defined in its package.json
+# Install dependencies for frontend and its dependencies
+RUN npm install
+
+# Build shared-types first
 RUN npm run build --workspace=shared-types
 
 # Build frontend

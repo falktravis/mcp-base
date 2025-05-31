@@ -82,6 +82,15 @@ This guide explains how to set up and run MCP Pro locally for development.
             # pnpm --filter shared-types run build
             ```
             The frontend and backend dev servers should pick up changes in `shared-types` automatically due to symlinking by npm/pnpm workspaces, but a manual rebuild of `shared-types` might be necessary if direct output (e.g., from a `dist` folder) is consumed.
+            
+            **IMPORTANT:** When importing from shared-types, always use the path alias format:
+            ```typescript
+            // Correct way to import
+            import { SomeType } from '@shared-types/module-name';
+            
+            // Do not use relative paths like this:
+            // import { SomeType } from '../../../shared-types/src/module-name';
+            ```
 
 ## Building for Production
 

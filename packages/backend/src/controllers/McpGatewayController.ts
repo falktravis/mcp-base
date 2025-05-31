@@ -1,18 +1,7 @@
 import { Request, Response } from 'express';
 import { CentralGatewayMCPService } from '../services/CentralGatewayMCPService';
-import { McpResponsePayload } from '../../../shared-types/src/api-contracts';
-import { managedServerService } from '../services/ManagedServerService';
+import { McpResponsePayload } from '@shared-types/api-contracts';
 import { ApiKeyService } from '../services/ApiKeyService'; // Corrected: Import class directly
-import { trafficMonitoringService } from '../services/TrafficMonitoringService';
-
-// Instantiate the service (or get it from a DI container/service registry)
-const apiKeyServiceInstance = new ApiKeyService(); // Create an instance
-
-const centralGatewayServiceInstance = new CentralGatewayMCPService(
-    managedServerService, // Assuming this is the singleton instance
-    apiKeyServiceInstance, // Use the instantiated service
-    trafficMonitoringService // Assuming this is the singleton instance
-);
 
 export class McpGatewayController {
     constructor(private gatewayService: CentralGatewayMCPService) {}
@@ -66,5 +55,3 @@ export class McpGatewayController {
         }
     }
 }
-
-export const mcpGatewayController = new McpGatewayController(centralGatewayServiceInstance);

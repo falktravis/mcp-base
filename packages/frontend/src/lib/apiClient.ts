@@ -1,5 +1,6 @@
 // packages/frontend/src/lib/apiClient.ts
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import { ApiResponse } from '@shared-types/api-contracts';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -78,63 +79,58 @@ class ApiClient {
       }
     );
   }
-
   /**
    * @method get
    * @description Performs a GET request.
    * @param {string} path - The API endpoint path.
    * @param {AxiosRequestConfig} [config] - Optional Axios request configuration.
-   * @returns {Promise<AxiosResponse<T>>}
+   * @returns {Promise<AxiosResponse<ApiResponse<T>>>}
    */
-  public get<T = any>(path: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
-    return this.axiosInstance.get<T>(path, config);
+  public get<T = any>(path: string, config?: AxiosRequestConfig): Promise<AxiosResponse<ApiResponse<T>>> {
+    return this.axiosInstance.get<ApiResponse<T>>(path, config);
   }
-
   /**
    * @method post
    * @description Performs a POST request.
    * @param {string} path - The API endpoint path.
    * @param {D} data - The data to send in the request body.
    * @param {AxiosRequestConfig} [config] - Optional Axios request configuration.
-   * @returns {Promise<AxiosResponse<T>>}
+   * @returns {Promise<AxiosResponse<ApiResponse<T>>>}
    */
-  public post<T = any, D = any>(path: string, data?: D, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
-    return this.axiosInstance.post<T>(path, data, config);
+  public post<T = any, D = any>(path: string, data?: D, config?: AxiosRequestConfig): Promise<AxiosResponse<ApiResponse<T>>> {
+    return this.axiosInstance.post<ApiResponse<T>>(path, data, config);
   }
-
   /**
    * @method put
    * @description Performs a PUT request.
    * @param {string} path - The API endpoint path.
    * @param {D} data - The data to send in the request body.
    * @param {AxiosRequestConfig} [config] - Optional Axios request configuration.
-   * @returns {Promise<AxiosResponse<T>>}
+   * @returns {Promise<AxiosResponse<ApiResponse<T>>>}
    */
-  public put<T = any, D = any>(path: string, data?: D, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
-    return this.axiosInstance.put<T>(path, data, config);
+  public put<T = any, D = any>(path: string, data?: D, config?: AxiosRequestConfig): Promise<AxiosResponse<ApiResponse<T>>> {
+    return this.axiosInstance.put<ApiResponse<T>>(path, data, config);
   }
-
   /**
    * @method delete
    * @description Performs a DELETE request.
    * @param {string} path - The API endpoint path.
    * @param {AxiosRequestConfig} [config] - Optional Axios request configuration.
-   * @returns {Promise<AxiosResponse<T>>}
+   * @returns {Promise<AxiosResponse<ApiResponse<T>>>}
    */
-  public delete<T = any>(path: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
-    return this.axiosInstance.delete<T>(path, config);
+  public delete<T = any>(path: string, config?: AxiosRequestConfig): Promise<AxiosResponse<ApiResponse<T>>> {
+    return this.axiosInstance.delete<ApiResponse<T>>(path, config);
   }
-
   /**
    * @method patch
    * @description Performs a PATCH request.
    * @param {string} path - The API endpoint path.
    * @param {D} data - The data to send in the request body.
    * @param {AxiosRequestConfig} [config] - Optional Axios request configuration.
-   * @returns {Promise<AxiosResponse<T>>}
+   * @returns {Promise<AxiosResponse<ApiResponse<T>>>}
    */
-  public patch<T = any, D = any>(path: string, data?: D, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
-    return this.axiosInstance.patch<T>(path, data, config);
+  public patch<T = any, D = any>(path: string, data?: D, config?: AxiosRequestConfig): Promise<AxiosResponse<ApiResponse<T>>> {
+    return this.axiosInstance.patch<ApiResponse<T>>(path, data, config);
   }
 }
 

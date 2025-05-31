@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { ApiKeyService } from '../services/ApiKeyService';
-import { ApiKey } from '../../../shared-types/src/db-models'; // For the type of validated key
-import { ApiResponse } from '../../../shared-types/src/api-contracts';
+import { ApiKey } from '@shared-types/db-models'; // For the type of validated key
+import { ApiResponse } from '@shared-types/api-contracts';
 
 // It's good practice to instantiate services if they are designed as classes
 // or ensure they are singletons if accessed directly.

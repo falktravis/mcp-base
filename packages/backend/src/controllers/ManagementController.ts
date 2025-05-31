@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { managedServerService, ManagedServerService } from '../services/ManagedServerService';
+import { ManagedServerService } from '../services/ManagedServerService';
 import { ApiKeyService } from '../services/ApiKeyService'; // Corrected: Import class directly
 import { 
     RegisterServerRequest, 
@@ -12,8 +12,8 @@ import {
     CreateApiKeyResponse,
     ServerStatusResponse,
     ServerStatus
-} from '../../../shared-types/src/api-contracts'; // Corrected import path
-import { ApiKey } from '../../../shared-types/src/db-models'; // For mapping ApiKeyService response
+} from '@shared-types/api-contracts'; // Corrected import path
+import { ApiKey } from '@shared-types/db-models'; // For mapping ApiKeyService response
 
 const handleServiceCall = async <T>(
     res: Response, 
@@ -224,12 +224,3 @@ export class ManagementController {
         );
     }
 }
-
-// Instantiate the controller with the services
-// This will be imported and used in the routes configuration
-// Note: Service instances are typically managed by a dependency injection container or a central service registry.
-// For simplicity here, we are assuming apiKeyService is available for direct import if it's a singleton.
-// If ApiKeyService is not a singleton, it should be instantiated and passed here like ManagedServerService.
-// For now, assuming ApiKeyService is also instantiated similarly to managedServerService or is a singleton.
-const apiKeyServiceInstance = new ApiKeyService(); // Create an instance
-export const managementController = new ManagementController(managedServerService, apiKeyServiceInstance);

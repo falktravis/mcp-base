@@ -25,6 +25,25 @@ MCP Pro is a comprehensive web application designed to streamline the management
 -   `packages/backend`: The Node.js/Express API server, MCP gateway logic, and database interactions (PostgreSQL).
 -   `packages/shared-types`: TypeScript type definitions shared between the frontend and backend.
 
+### Shared Types
+
+The `shared-types` package contains all the common TypeScript interfaces and types shared between frontend and backend. This ensures consistency across the application. To use these types in any part of the codebase:
+
+```typescript
+// Import shared types using path aliases
+import { ApiResponse, ServerType } from '@shared-types/api-contracts';
+import { UserModel } from '@shared-types/db-models';
+
+// Do NOT use relative paths
+// import { ApiResponse } from '../../../shared-types/src/api-contracts'; ❌
+```
+
+If you modify the shared types, you need to rebuild the package:
+
+```bash
+npm run build --workspace=shared-types
+```
+
 ## Getting Started & Documentation
 
 For comprehensive information on setting up your local development environment, architecture details, API references, and more, please refer to our **[full documentation](./docs/README.md)**.

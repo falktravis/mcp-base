@@ -1,5 +1,6 @@
 // packages/frontend/src/hooks/placeholder.ts
 import { useState, useEffect } from 'react';
+import { ApiResponse } from '@shared-types/api-contracts';
 
 /**
  * @file placeholder.ts
@@ -28,15 +29,27 @@ export const usePlaceholderData = <T>(endpoint: string): {
     setLoading(true);
     const timer = setTimeout(() => {
       try {
-        // Simulate API call
+        // Simulate API call        
         if (endpoint === 'example/success') {
-          setData({
-            message: 'This is placeholder data from a custom hook!',
-            timestamp: new Date().toISOString(),
-          } as T);
+          // Using ApiResponse structure from shared-types
+          const apiResponse: ApiResponse<T> = {
+            success: true,
+            data: {
+              message: 'This is placeholder data from a custom hook!',
+              timestamp: new Date().toISOString(),
+            } as T
+          };
+          setData(apiResponse.data || null);
           setError(null);
         } else if (endpoint === 'example/error') {
-          throw new Error('Simulated API error in custom hook.');        } else {
+          const apiResponse: ApiResponse = {
+            success: false,
+            error: {
+              message: 'Simulated API error in custom hook.',
+              code: 'SIMULATED_ERROR'
+            }
+          };
+          throw new Error(apiResponse.error?.message);} else {
           setData(null); // Or some default data
         }
       } catch (e: any) { // eslint-disable-line @typescript-eslint/no-explicit-any

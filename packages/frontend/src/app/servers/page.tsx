@@ -3,15 +3,7 @@
 
 import React, { useState } from 'react';
 // import AddServerModal from '@/components/servers/AddServerModal'; // Placeholder for modal component
-
-// Import the NewServerData type
-export interface NewServerData {
-  name: string;
-  host: string;
-  port: number;
-  type: string;
-  description?: string;
-}
+import { RegisterServerRequest, ServerType, ManagedMcpServerDetails } from '@shared-types/api-contracts';
 
 /**
  * @page ServersPage
@@ -19,43 +11,43 @@ export interface NewServerData {
  */
 
 // Placeholder data for servers
-const mockServers = [
+// Using a modified version of ManagedMcpServerDetails interface
+const mockServers: Array<Omit<ManagedMcpServerDetails, 'connectionDetails'> & { host: string, port: number }> = [
   {
     id: 'server-001',
     name: 'Alpha Production Server',
-    status: 'Running',
-    type: 'LLM Inference Optimized',
+    status: 'running',
+    serverType: 'stdio',
     host: '192.168.1.101',
     port: 8080,
-    lastActivity: '2023-10-26T10:00:00Z',
-    version: 'MCP 1.2.3',
+    createdAt: '2023-10-25T12:00:00Z',
+    updatedAt: '2023-10-25T12:00:00Z',
   },
   {
     id: 'server-002',
     name: 'Beta Staging Environment',
-    status: 'Stopped',
-    type: 'General Purpose MCP',
+    status: 'stopped',
+    serverType: 'streamable-http',
     host: 'mcp-beta.example.com',
     port: 9000,
-    lastActivity: '2023-10-25T15:30:00Z',
-    version: 'MCP 1.1.0',
+    createdAt: '2023-10-24T15:30:00Z',
+    updatedAt: '2023-10-24T15:30:00Z',
   },
   {
     id: 'server-003',
     name: 'Gamma Development Instance',
-    status: 'Error',
-    type: 'Experimental Features',
+    status: 'error',
+    serverType: 'sse',
     host: 'localhost',
     port: 7070,
-    lastActivity: '2023-10-26T09:15:00Z',
-    version: 'MCP Nightly',
+    createdAt: '2023-10-23T09:45:00Z',
+    updatedAt: '2023-10-23T09:45:00Z',
   },
 ];
 
 const ServersPage: React.FC = () => {  const [servers, setServers] = useState(mockServers);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  console.log('ServersPage: Rendering with servers:', servers);
-  const handleAddServer = (newServer: NewServerData) => {
+  console.log('ServersPage: Rendering with servers:', servers);  const handleAddServer = (newServer: RegisterServerRequest) => {
     // Placeholder: This would typically involve an API call
     console.log('ServersPage: Adding new server:', newServer);
     // setServers(prev => [...prev, { ...newServer, id: `server-${Date.now()}` }]);
@@ -125,8 +117,8 @@ const ServersPage: React.FC = () => {  const [servers, setServers] = useState(mo
                 <td className="px-5 py-4 border-b border-gray-200 bg-white text-sm">
                   <span
                     className={`px-2 py-1 font-semibold leading-tight rounded-full text-xs whitespace-no-wrap ${ 
-                      server.status === 'Running' ? 'text-green-900 bg-green-200' :
-                      server.status === 'Stopped' ? 'text-yellow-900 bg-yellow-200' :
+                      server.status === 'running' ? 'text-green-900 bg-green-200' :
+                      server.status === 'stopped' ? 'text-yellow-900 bg-yellow-200' :
                       'text-red-900 bg-red-200'
                     }`}
                   >
@@ -134,8 +126,7 @@ const ServersPage: React.FC = () => {  const [servers, setServers] = useState(mo
                   </span>
                 </td>
                 <td className="px-5 py-4 border-b border-gray-200 bg-white text-sm">
-                  <p className="text-gray-900 whitespace-no-wrap">{server.type}</p>
-                  <p className="text-gray-600 whitespace-no-wrap text-xs">{server.version}</p>
+                  <p className="text-gray-900 whitespace-no-wrap">{server.serverType}</p>
                 </td>
                 <td className="px-5 py-4 border-b border-gray-200 bg-white text-sm">
                   <p className="text-gray-900 whitespace-no-wrap">{server.host}:{server.port}</p>
@@ -149,9 +140,9 @@ const ServersPage: React.FC = () => {  const [servers, setServers] = useState(mo
                   </button>
                   <button 
                     onClick={() => toggleServerStatus(server.id)}
-                    className={`${server.status === 'Running' ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'} text-xs`}
+                    className={`${server.status === 'running' ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'} text-xs`}
                   >
-                    {server.status === 'Running' ? 'Stop' : 'Start'}
+                    {server.status === 'running' ? 'Stop' : 'Start'}
                   </button>
                 </td>
               </tr>

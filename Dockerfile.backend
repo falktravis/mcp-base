@@ -23,6 +23,9 @@ COPY . .
 # Install all dependencies using npm
 RUN npm ci
 
+# Ensure TypeScript base config is always present in the container
+COPY tsconfig.base.json ./tsconfig.base.json
+
 # Set default command for development (will be overridden by docker-compose)
 CMD [ "npm", "run", "dev", "--workspace=backend" ]
 
@@ -41,11 +44,17 @@ COPY packages/shared-types/package.json ./packages/shared-types/
 # Copy the rest of the monorepo source code
 COPY . .
 
-# Install only production dependencies for backend and its dependencies
-RUN npm ci
+# Install dependencies and update package-lock.json
+RUN npm install
 
-# Build backend (and shared-types as it's a dependency)
+# Build shared-types first
+RUN npm run build --workspace=shared-types
+
+# Then build backend
 RUN npm run build --workspace=backend
+
+# Ensure TypeScript base config is always present in the container
+COPY tsconfig.base.json ./tsconfig.base.json
 
 
 # --- Production Stage ---
@@ -62,6 +71,9 @@ COPY --from=builder /usr/src/app/node_modules ./node_modules
 # Copy built backend application from builder stage
 COPY --from=builder /usr/src/app/packages/backend ./packages/backend
 COPY --from=builder /usr/src/app/packages/shared-types ./packages/shared-types
+
+# Ensure TypeScript base config is always present in the container
+COPY tsconfig.base.json ./tsconfig.base.json
 
 
 # Expose port

@@ -1,4 +1,6 @@
-// filepath: c:\Users\falkt\Documents\mcp-pro\packages\backend\src\services\McpConnectionWrapper.ts
+import { EventEmitter } from 'events';
+import { ChildProcess } from 'child_process';
+
 // Placeholder types for @mcp/sdk
 interface MCPMessage {
   id: string;
@@ -30,12 +32,9 @@ class MCPConnection extends EventEmitter {
   static generateRequestId(): string { return Math.random().toString(36).substring(2); }
 }
 // End placeholder types for @mcp/sdk
-
-import { EventEmitter } from 'events';
-import { ChildProcess } from 'child_process';
 // Adjust import paths for shared-types
-import { ManagedMcpServer } from '../../../shared-types/src/db-models';
-import { ServerStatus, McpRequestPayload, McpResponsePayload } from '../../../shared-types/src/api-contracts'; // Import McpResponsePayload
+import { ManagedMcpServer } from '@shared-types/db-models';
+import { ServerStatus, McpRequestPayload, McpResponsePayload } from '@shared-types/api-contracts'; // Import McpResponsePayload
 
 // Define more specific types for events if needed
 export interface McpConnectionWrapperEvents {

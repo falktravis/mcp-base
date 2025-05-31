@@ -6,7 +6,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "dev": "nodemon src/index.ts",
-    "build": "tsc -b .",
+    "build": "tsc -p .",
     "start": "node dist/index.js",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"src/**/*.ts\""
@@ -17,8 +17,7 @@
     "dotenv": "^16.0.0",
     "bcrypt": "^6.0.0",
     "chokidar": "^4.0.3",
-    "uuid": "^11.1.0",
-    "shared-types": "workspace:*"
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",

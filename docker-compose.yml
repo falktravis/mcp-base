@@ -24,9 +24,10 @@ services:
       DATABASE_URL: postgresql://mcp_pro_user:mcp_pro_password@postgres:5432/mcp_pro_db?schema=public
       NODE_ENV: development # Change to production for actual deployments
       # Add other backend environment variables here
-    volumes:
+    volumes:      
       - ./packages/backend:/usr/src/app/packages/backend
-      - ./packages/shared-types:/usr/src/app/packages/shared-types      # For development, mount node_modules from host to container to avoid reinstalling on every change
+      - ./packages/shared-types:/usr/src/app/packages/shared-types
+      # For development, mount node_modules from host to container to avoid reinstalling on every change
       # - ./packages/backend/node_modules:/usr/src/app/packages/backend/node_modules
     command: npm run dev --workspace=backend
 

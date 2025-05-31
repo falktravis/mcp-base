@@ -2,8 +2,8 @@
 // and their outcomes to the PostgreSQL database. It will also provide methods to query this data.
 
 import { query } from '../config/database'; // Uses the exported query function from database.ts
-import { TrafficLog } from '../../../shared-types/src/db-models'; // Corrected: TrafficLog is in db-models
-import { PaginatedResponse } from '../../../shared-types/src/api-contracts'; // PaginatedResponse is in api-contracts
+import { TrafficLog } from '@shared-types/db-models'; // Corrected: TrafficLog is in db-models
+import { PaginatedResponse } from '@shared-types/api-contracts'; // PaginatedResponse is in api-contracts
 import { v4 as uuidv4 } from 'uuid'; // Using uuid for ID generation
 
 // Placeholder for a more sophisticated logging solution
@@ -26,11 +26,11 @@ export class TrafficMonitoringService {
   ): Promise<TrafficLog | null> {
     const newId = uuidv4();
     const sql = `
-      INSERT INTO "TrafficLog" (
-        id, "serverId", timestamp, "mcpMethod", "mcpRequestId", "sourceIp", 
-        "requestSizeBytes", "responseSizeBytes", "httpStatus", "targetServerHttpStatus", 
-        "isSuccess", "durationMs", "apiKeyId", "errorMessage"
-        // Add requestPayloadSnippet, responsePayloadSnippet if you decide to use them
+      INSERT INTO traffic_log (
+        id, server_id, timestamp, mcp_method, mcp_request_id, source_ip, 
+        request_size_bytes, response_size_bytes, http_status, target_server_http_status, 
+        is_success, duration_ms, api_key_id, error_message
+        -- Add requestPayloadSnippet, responsePayloadSnippet if you decide to use them
       )
       VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *;
@@ -90,22 +90,22 @@ export class TrafficMonitoringService {
     const currentLimit = Math.max(1, pagination.limit || 10);
     const offset = (currentPage - 1) * currentLimit;
 
-    let baseSql = 'SELECT * FROM "TrafficLog"';
-    let countSql = 'SELECT COUNT(*) as total FROM "TrafficLog"';
+    let baseSql = 'SELECT * FROM traffic_log';
+    let countSql = 'SELECT COUNT(*) as total FROM traffic_log';
     const whereClauses: string[] = [];
     const queryParams: any[] = [];
     let paramIndex = 1;
 
     if (filters.serverId) {
-      whereClauses.push(`"serverId" = $${paramIndex++}`);
+      whereClauses.push(`server_id = $${paramIndex++}`);
       queryParams.push(filters.serverId);
     }
     if (filters.mcpMethod) {
-      whereClauses.push(`"mcpMethod" ILIKE $${paramIndex++}`); // Case-insensitive for method name
+      whereClauses.push(`mcp_method ILIKE $${paramIndex++}`); // Case-insensitive for method name
       queryParams.push(`%${filters.mcpMethod}%`);
     }
     if (filters.isSuccess !== undefined) {
-      whereClauses.push(`"isSuccess" = $${paramIndex++}`);
+      whereClauses.push(`is_success = $${paramIndex++}`);
       queryParams.push(filters.isSuccess);
     }
     if (filters.startDate) {
@@ -117,11 +117,11 @@ export class TrafficMonitoringService {
       queryParams.push(filters.endDate);
     }
     if (filters.apiKeyId) {
-        whereClauses.push(`"apiKeyId" = $${paramIndex++}`);
+        whereClauses.push(`api_key_id = $${paramIndex++}`);
         queryParams.push(filters.apiKeyId);
     }
     if (filters.sourceIp) {
-        whereClauses.push(`"sourceIp" ILIKE $${paramIndex++}`);
+        whereClauses.push(`source_ip ILIKE $${paramIndex++}`);
         queryParams.push(`%${filters.sourceIp}%`);
     }
 
@@ -170,13 +170,13 @@ export class TrafficMonitoringService {
   async getTrafficStats(
     filters?: { serverId?: string; startDate?: string; endDate?: string; mcpMethod?: string; }
   ): Promise<any> { // Define a proper interface for stats later
-    let baseQuery = 'SELECT COUNT(*) as total_requests, SUM(CASE WHEN "isSuccess" = false THEN 1 ELSE 0 END) as failed_requests FROM "TrafficLog"';
+    let baseQuery = 'SELECT COUNT(*) as total_requests, SUM(CASE WHEN is_success = false THEN 1 ELSE 0 END) as failed_requests FROM traffic_log';
     const queryParams: any[] = [];
     const whereClauses: string[] = [];
     let paramIndex = 1;
 
     if (filters?.serverId) {
-        whereClauses.push(`"serverId" = $${paramIndex++}`);
+        whereClauses.push(`server_id = $${paramIndex++}`);
         queryParams.push(filters.serverId);
     }
     if (filters?.startDate) {
@@ -188,7 +188,7 @@ export class TrafficMonitoringService {
         queryParams.push(filters.endDate);
     }
     if (filters?.mcpMethod) {
-        whereClauses.push(`"mcpMethod" ILIKE $${paramIndex++}`);
+        whereClauses.push(`mcp_method ILIKE $${paramIndex++}`);
         queryParams.push(`%${filters.mcpMethod}%`);
     }
 
@@ -218,5 +218,3 @@ export class TrafficMonitoringService {
     }
   }
 }
-
-export const trafficMonitoringService = new TrafficMonitoringService();
