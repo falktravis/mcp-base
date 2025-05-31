@@ -3,7 +3,10 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "composite": true // Required for project references by other packages
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "noEmit": false // Explicitly allow emitting files
   },
   "include": ["src"],
   "exclude": ["node_modules", "dist"]

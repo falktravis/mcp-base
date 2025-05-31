@@ -1,59 +1,97 @@
 // This service will be responsible for logging all incoming requests to the CentralGatewayMCPService
 // and their outcomes to the PostgreSQL database. It will also provide methods to query this data.
 
-import { query } from '../config/database'; // Import query function
-import { TrafficLog } from 'shared-types'; // Import TrafficLog type
-import { randomBytes } from 'crypto';
+import { query } from '../config/database'; // Uses the exported query function from database.ts
+import { TrafficLog } from '../../../shared-types/src/db-models'; // Corrected: TrafficLog is in db-models
+import { PaginatedResponse } from '../../../shared-types/src/api-contracts'; // PaginatedResponse is in api-contracts
+import { v4 as uuidv4 } from 'uuid'; // Using uuid for ID generation
+
+// Placeholder for a more sophisticated logging solution
+const logger = console;
 
 export class TrafficMonitoringService {
   constructor() {
-    console.log('TrafficMonitoringService initialized for direct SQL');
+    logger.info('[TrafficMonitoringService] Initialized.');
   }
 
+  /**
+   * Logs a single traffic event to the database.
+   * The structure of logData should align with the TrafficLog interface in db-models.ts,
+   * excluding id and timestamp which are auto-generated.
+   * @param logData - The data for the traffic log.
+   * @returns The created TrafficLog object or null if an error occurred.
+   */
   async logRequest(
     logData: Omit<TrafficLog, 'id' | 'timestamp'>
   ): Promise<TrafficLog | null> {
-    const newId = randomBytes(16).toString('hex');
+    const newId = uuidv4();
     const sql = `
       INSERT INTO "TrafficLog" (
-        id, "serverId", "requestType", "targetTool", "targetResourceUri", 
-        "targetPromptName", "requestPayload", "responsePayload", "isSuccess", 
-        "durationMs", "clientIp", "apiKeyId", timestamp
+        id, "serverId", timestamp, "mcpMethod", "mcpRequestId", "sourceIp", 
+        "requestSizeBytes", "responseSizeBytes", "httpStatus", "targetServerHttpStatus", 
+        "isSuccess", "durationMs", "apiKeyId", "errorMessage"
+        // Add requestPayloadSnippet, responsePayloadSnippet if you decide to use them
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+      VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *;
     `;
     try {
       const { rows } = await query(sql, [
         newId,
         logData.serverId,
-        logData.requestType,
-        logData.targetTool,
-        logData.targetResourceUri,
-        logData.targetPromptName,
-        JSON.stringify(logData.requestPayload), // Ensure payloads are stringified if they are objects
-        logData.responsePayload ? JSON.stringify(logData.responsePayload) : null,
+        logData.mcpMethod,
+        logData.mcpRequestId,
+        logData.sourceIp,
+        logData.requestSizeBytes,
+        logData.responseSizeBytes,
+        logData.httpStatus,
+        logData.targetServerHttpStatus,
         logData.isSuccess,
         logData.durationMs,
-        logData.clientIp,
         logData.apiKeyId,
+        logData.errorMessage,
       ]);
       if (rows.length > 0) {
-        return rows[0] as TrafficLog;
+        // The row from DB should match TrafficLog structure, assuming DB columns match interface fields
+        // Dates are typically returned as strings or Date objects by pg driver depending on config/parsers
+        const dbRow = rows[0];
+        return {
+            ...dbRow,
+            timestamp: new Date(dbRow.timestamp), // Ensure timestamp is a Date object
+        } as TrafficLog;
       }
       return null;
     } catch (error) {
-      console.error('Error logging traffic data:', error);
+      logger.error('[TrafficMonitoringService] Error logging traffic data:', error);
       return null;
     }
   }
 
+  /**
+   * Retrieves traffic logs based on specified filters and pagination.
+   * Filters should align with fields in the TrafficLog interface.
+   * @param filters - Criteria to filter logs by.
+   * @param pagination - Pagination parameters (page, limit).
+   * @returns A paginated response of TrafficLog objects.
+   */
   async getTrafficLogs(
-    filters: { serverId?: string; requestType?: string; startDate?: Date; endDate?: Date; isSuccess?: boolean },
-    pagination: { skip?: number; take?: number }
-  ): Promise<{ logs: TrafficLog[]; total: number }> {
+    filters: { 
+        serverId?: string; 
+        mcpMethod?: string; 
+        startDate?: string; // ISO Date string
+        endDate?: string;   // ISO Date string
+        isSuccess?: boolean; 
+        apiKeyId?: string;
+        sourceIp?: string;
+    },
+    pagination: { page?: number; limit?: number }
+  ): Promise<PaginatedResponse<TrafficLog>> {
+    const currentPage = Math.max(1, pagination.page || 1);
+    const currentLimit = Math.max(1, pagination.limit || 10);
+    const offset = (currentPage - 1) * currentLimit;
+
     let baseSql = 'SELECT * FROM "TrafficLog"';
-    let countSql = 'SELECT COUNT(*) FROM "TrafficLog"';
+    let countSql = 'SELECT COUNT(*) as total FROM "TrafficLog"';
     const whereClauses: string[] = [];
     const queryParams: any[] = [];
     let paramIndex = 1;
@@ -62,9 +100,9 @@ export class TrafficMonitoringService {
       whereClauses.push(`"serverId" = $${paramIndex++}`);
       queryParams.push(filters.serverId);
     }
-    if (filters.requestType) {
-      whereClauses.push(`"requestType" = $${paramIndex++}`);
-      queryParams.push(filters.requestType);
+    if (filters.mcpMethod) {
+      whereClauses.push(`"mcpMethod" ILIKE $${paramIndex++}`); // Case-insensitive for method name
+      queryParams.push(`%${filters.mcpMethod}%`);
     }
     if (filters.isSuccess !== undefined) {
       whereClauses.push(`"isSuccess" = $${paramIndex++}`);
@@ -78,6 +116,14 @@ export class TrafficMonitoringService {
       whereClauses.push(`timestamp <= $${paramIndex++}`);
       queryParams.push(filters.endDate);
     }
+    if (filters.apiKeyId) {
+        whereClauses.push(`"apiKeyId" = $${paramIndex++}`);
+        queryParams.push(filters.apiKeyId);
+    }
+    if (filters.sourceIp) {
+        whereClauses.push(`"sourceIp" ILIKE $${paramIndex++}`);
+        queryParams.push(`%${filters.sourceIp}%`);
+    }
 
     if (whereClauses.length > 0) {
       const whereString = ` WHERE ${whereClauses.join(' AND ')}`;
@@ -85,83 +131,90 @@ export class TrafficMonitoringService {
       countSql += whereString;
     }
 
-    baseSql += ` ORDER BY timestamp DESC`;
-    if (pagination.take !== undefined) {
-      baseSql += ` LIMIT $${paramIndex++}`;
-      queryParams.push(pagination.take);
-    }
-    if (pagination.skip !== undefined) {
-      baseSql += ` OFFSET $${paramIndex++}`;
-      queryParams.push(pagination.skip);
-    }
-    baseSql += ';';
+    baseSql += ` ORDER BY timestamp DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+    const finalQueryParams = [...queryParams, currentLimit, offset];
+    const countQueryParams = [...queryParams]; 
 
     try {
-      const { rows: logs } = await query(baseSql, queryParams);
-      // For countSql, we need to use the same queryParams used for filtering, but not for pagination
-      const countQueryParams = queryParams.slice(0, whereClauses.length);
-      const { rows: countResult } = await query(countSql, countQueryParams);
+      const logsResult = await query(baseSql, finalQueryParams);
+      const totalResult = await query(countSql, countQueryParams);
+
+      const logs: TrafficLog[] = logsResult.rows.map((row: any) => ({
+        ...row,
+        timestamp: new Date(row.timestamp),
+      }));
       
-      const total = parseInt(countResult[0].count, 10);
-      return { logs: logs as TrafficLog[], total };
+      const total = parseInt(totalResult.rows[0].total, 10) || 0;
+
+      return {
+        items: logs,
+        total,
+        page: currentPage,
+        limit: currentLimit,
+      };
     } catch (error) {
-      console.error('Error fetching traffic logs:', error);
-      return { logs: [], total: 0 };
+      logger.error('[TrafficMonitoringService] Error fetching traffic logs:', error);
+      return {
+        items: [],
+        total: 0,
+        page: currentPage,
+        limit: currentLimit,
+      };
     }
   }
 
-  async getTrafficLogById(id: string): Promise<TrafficLog | null> {
-    const sql = 'SELECT * FROM "TrafficLog" WHERE id = $1;';
-    try {
-      const { rows } = await query(sql, [id]);
-      if (rows.length > 0) {
-        return rows[0] as TrafficLog;
-      }
-      return null;
-    } catch (error) {
-      console.error('Error fetching traffic log by ID:', error);
-      return null;
-    }
-  }
-
-  async getTrafficStats(filters: { serverId?: string; startDate?: Date; endDate?: Date }): Promise<any> {
-    let successSql = 'SELECT COUNT(*) FROM "TrafficLog" WHERE "isSuccess" = TRUE';
-    let failureSql = 'SELECT COUNT(*) FROM "TrafficLog" WHERE "isSuccess" = FALSE';
+  /**
+   * Provides aggregated statistics about traffic.
+   * (This is a basic version and can be expanded significantly)
+   */
+  async getTrafficStats(
+    filters?: { serverId?: string; startDate?: string; endDate?: string; mcpMethod?: string; }
+  ): Promise<any> { // Define a proper interface for stats later
+    let baseQuery = 'SELECT COUNT(*) as total_requests, SUM(CASE WHEN "isSuccess" = false THEN 1 ELSE 0 END) as failed_requests FROM "TrafficLog"';
     const queryParams: any[] = [];
     const whereClauses: string[] = [];
     let paramIndex = 1;
 
-    if (filters.serverId) {
-      whereClauses.push(`"serverId" = $${paramIndex++}`);
-      queryParams.push(filters.serverId);
+    if (filters?.serverId) {
+        whereClauses.push(`"serverId" = $${paramIndex++}`);
+        queryParams.push(filters.serverId);
     }
-    if (filters.startDate) {
-      whereClauses.push(`timestamp >= $${paramIndex++}`);
-      queryParams.push(filters.startDate);
+    if (filters?.startDate) {
+        whereClauses.push(`timestamp >= $${paramIndex++}`);
+        queryParams.push(filters.startDate);
     }
-    if (filters.endDate) {
-      whereClauses.push(`timestamp <= $${paramIndex++}`);
-      queryParams.push(filters.endDate);
+    if (filters?.endDate) {
+        whereClauses.push(`timestamp <= $${paramIndex++}`);
+        queryParams.push(filters.endDate);
     }
-    
+    if (filters?.mcpMethod) {
+        whereClauses.push(`"mcpMethod" ILIKE $${paramIndex++}`);
+        queryParams.push(`%${filters.mcpMethod}%`);
+    }
+
     if (whereClauses.length > 0) {
-      const whereString = ` AND ${whereClauses.join(' AND ')}`; // Starts with AND because "isSuccess" is already there
-      successSql += whereString;
-      failureSql += whereString;
+        baseQuery += ` WHERE ${whereClauses.join(' AND ')}`;
     }
-    successSql += ';';
-    failureSql += ';';
 
     try {
-      const { rows: successResult } = await query(successSql, queryParams);
-      const { rows: failureResult } = await query(failureSql, queryParams);
-      
-      const successCount = parseInt(successResult[0].count, 10);
-      const failureCount = parseInt(failureResult[0].count, 10);
-      return { successCount, failureCount };
+        const { rows } = await query(baseQuery, queryParams);
+        const stats = rows[0];
+        const totalRequests = parseInt(stats.total_requests, 10) || 0;
+        const failedRequests = parseInt(stats.failed_requests, 10) || 0;
+        return {
+            totalRequests,
+            failedRequests,
+            successRate: totalRequests > 0 ? 
+                ((totalRequests - failedRequests) / totalRequests) * 100 
+                : 100,
+        };
     } catch (error) {
-      console.error('Error fetching traffic stats:', error);
-      return { successCount: 0, failureCount: 0 };
+        logger.error('[TrafficMonitoringService] Error fetching traffic stats:', error);
+        return {
+            totalRequests: 0,
+            failedRequests: 0,
+            successRate: 0,
+        };
     }
   }
 }

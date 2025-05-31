@@ -5,8 +5,8 @@ import dotenv from 'dotenv';
 import { initializeDatabase } from './config/database'; // Import initializeDatabase
 
 // Import routes
-// import managementApiRoutes from './routes/managementApi';
-// import mcpApiRoutes from './routes/mcpApi';
+import managementApiRoutes from './routes/managementApi';
+import mcpApiRoutes from './routes/mcpApi';
 
 dotenv.config(); // Load environment variables from .env file
 
@@ -29,8 +29,8 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 
 // API Routes
-// app.use('/api/v1/management', managementApiRoutes);
-// app.use('/mcp', mcpApiRoutes);
+app.use('/api/management', managementApiRoutes);
+app.use('/mcp', mcpApiRoutes);
 
 // Root endpoint
 app.get('/', (req: Request, res: Response) => {

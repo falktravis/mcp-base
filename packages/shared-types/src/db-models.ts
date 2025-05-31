@@ -1,41 +1,72 @@
 // This file will contain shared type definitions for database models,
+import { ServerType, ServerStatus } from './api-contracts'; // Import shared enums
 
 export interface ManagedMcpServer {
-  id: string;
+  id: string; // Primary Key, e.g., UUID
   name: string;
-  url: string;
-  type: string; // e.g., 'sse', 'streamable-http', 'stdio'
-  apiKey?: string; // Encrypted
-  credentials?: string; // Encrypted JSON blob for other auth types
   description?: string;
-  isEnabled: boolean;
+  serverType: ServerType;
+  // Store connection details securely, potentially encrypted or referencing a secrets manager
+  connectionDetails: { // Mirrored from RegisterServerRequest for consistency
+    url?: string; // For http, sse, websocket. Could be encrypted.
+    command?: string; // For stdio
+    args?: string[]; // For stdio
+    workingDirectory?: string; // For stdio
+    env?: Record<string, string>; // For stdio, sensitive values should be handled carefully
+  };
+  mcpOptions?: string; // JSON string of Record<string, any>, consider if this needs to be structured or encrypted
+  status: ServerStatus; // Denormalized status for quick lookups, updated by the service
+  isEnabled: boolean; // If the server is actively managed/proxied
+  tags?: string; // JSON string of string[] for easier DB querying if not using JSON type
   createdAt: Date;
   updatedAt: Date;
+  lastPingedAt?: Date; // For health checks
+  lastError?: string; // Store last error message for troubleshooting
 }
 
 export interface TrafficLog {
-  id: string;
-  serverId: string; // Foreign key to ManagedMcpServer
+  id: string; // Primary Key, e.g., UUID
+  serverId: string; // Foreign key to ManagedMcpServer.id
   timestamp: Date;
-  requestType: 'tool_call' | 'resource_access' | 'prompt_request';
-  targetTool?: string;
-  targetResourceUri?: string;
-  targetPromptName?: string;
-  requestPayload: unknown; // JSON blob
-  responsePayload?: unknown; // JSON blob
-  isSuccess: boolean;
-  durationMs: number;
-  clientIp?: string;
-  apiKeyId?: string; // If request used an API key (references ApiKey.id)
+  // MCP specific fields
+  mcpMethod: string;
+  mcpRequestId?: string;
+  // HTTP specific fields for the gateway interaction
+  sourceIp?: string;
+  requestSizeBytes?: number;
+  responseSizeBytes?: number;
+  httpStatus?: number; // Status code of the gateway response to the client
+  targetServerHttpStatus?: number; // Status code from the target MCP server (if applicable)
+  isSuccess: boolean; // Based on MCP response or HTTP status
+  durationMs: number; // Total duration for MCP Pro to handle and proxy the request
+  apiKeyId?: string; // Foreign key to ApiKey.id, if an API key was used for the gateway
+  // Raw request/response can be very large. Consider storing them elsewhere (e.g., S3, logs) or only snippets/hashes.
+  // requestPayloadSnippet?: string; // Snippet or hash
+  // responsePayloadSnippet?: string; // Snippet or hash
+  errorMessage?: string; // If an error occurred
 }
 
 export interface ApiKey {
-  id: string;
-  hashedKey: string; // Store only the hash
-  prefix: string; // For display, e.g., "mcp_abc..."
-  name?: string;
+  id: string; // Primary Key, e.g., UUID
+  name: string;
+  hashedApiKey: string; // Store only the securely hashed and salted API key
+  salt: string; // Salt used for hashing this specific key
+  prefix: string; // A few characters of the original key for identification (e.g., "mcp_abc...") - NOT the key itself
+  scopes?: string; // JSON string of string[], e.g., ["server:read", "server:manage:*", "apikey:manage"]
   expiresAt?: Date;
   lastUsedAt?: Date;
+  revokedAt?: Date; // Instead of deleting, mark as revoked
   createdAt: Date;
   updatedAt: Date;
+}
+
+// Future table for Marketplace Extension installations per server
+export interface ServerExtensionInstallation {
+  id: string; // Primary Key
+  serverId: string; // Foreign Key to ManagedMcpServer.id
+  extensionId: string; // Marketplace Extension ID
+  installedAt: Date;
+  version: string;
+  config?: string; // JSON string for extension-specific configuration
+  isEnabled: boolean;
 }

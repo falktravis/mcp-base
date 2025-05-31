@@ -26,8 +26,6 @@ mcp-pro/
 │   └── local_development_setup.md
 ├── packages/
 │   ├── backend/
-│   │   ├── prisma/
-│   │   │   └── schema.prisma
 │   │   ├── src/
 │   │   │   ├── controllers/
 │   │   │   ├── services/
@@ -55,7 +53,6 @@ mcp-pro/
 │       │   └── db-models.ts
 │       ├── package.json
 │       └── tsconfig.json
-├── .env.example (root, if any, or per package)
 ├── .eslintrc.js
 ├── .gitignore
 ├── .prettierrc.js
