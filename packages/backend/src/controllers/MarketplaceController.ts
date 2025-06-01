@@ -1,8 +1,9 @@
 import { Request, Response } from 'express';
-import { MarketplaceService, MarketplaceItem } from '../services/MarketplaceService';
+import { MarketplaceService } from '../services/MarketplaceService';
 import { 
     ApiResponse,
     PaginatedResponse,
+    ManagedMcpServerDetails
 } from '@shared-types/api-contracts';
 
 // Re-using a similar handler as in ManagementController for consistency
@@ -40,12 +41,9 @@ export class MarketplaceController {
     async getAllItems(req: Request, res: Response): Promise<void> {
         const page = parseInt(req.query.page as string) || 1;
         const limit = parseInt(req.query.limit as string) || 10;
-        const type = req.query.type as MarketplaceItem['type'] | undefined;
+        const type = req.query.type as string | undefined;
 
-        // The mock MarketplaceService might not support pagination or filtering yet.
-        // Adjusting the call based on its actual signature.
-        // For now, assume getAllItems in the service handles these or ignores them.
-        await handleServiceCall<PaginatedResponse<MarketplaceItem>>(
+        await handleServiceCall<PaginatedResponse<any>>( // Use 'any' for marketplace items
             res,
             //() => this.service.getAllItems(page, limit, type) // If service supports these
             async () => { // Adapting to current mock service structure
@@ -66,7 +64,7 @@ export class MarketplaceController {
 
     async getItemById(req: Request, res: Response): Promise<void> {
         const { itemId } = req.params;
-        await handleServiceCall<MarketplaceItem | null>(
+        await handleServiceCall<any | null>(
             res,
             () => this.service.getItemById(itemId),
             200,
@@ -78,9 +76,19 @@ export class MarketplaceController {
         const query = req.query.q as string || '';
         
         // Corrected to call service.searchItems with only the query parameter
-        await handleServiceCall<MarketplaceItem[]>( 
+        await handleServiceCall<any[]>( 
             res,
             () => this.service.searchItems(query)
+        );
+    }
+
+    async installMarketplaceItem(req: Request, res: Response): Promise<void> {
+        const { itemId } = req.params;
+        await handleServiceCall<ManagedMcpServerDetails | null>(
+            res,
+            () => this.service.installServer(itemId),
+            201, // 201 Created for successful installation
+            `Failed to install marketplace item with ID ${itemId} or item not found`
         );
     }
 }

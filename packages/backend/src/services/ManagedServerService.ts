@@ -4,14 +4,15 @@ import { v4 as uuidv4 } from 'uuid';
 import db from '../config/database'; // pg.Pool instance
 import { ManagedMcpServer } from '@shared-types/db-models';
 import { 
-    RegisterServerRequest, 
     UpdateServerConfigRequest, 
     ServerStatus, 
     ManagedMcpServerDetails, 
     ServerStatusResponse,
     PaginatedResponse,
     McpRequestPayload,
-    McpResponsePayload
+    McpResponsePayload,
+    ServerType,
+    RegisterServerRequest
 } from '@shared-types/api-contracts';
 import { McpConnectionWrapper } from './McpConnectionWrapper';
 import { DevWatcher } from './DevWatcher';
@@ -76,7 +77,7 @@ export class ManagedServerService {
       return null;
     }
   }
-  
+
   private mapManagedMcpServerToDbParams(server: ManagedMcpServer): any[] {
     return [
       server.id,
@@ -107,12 +108,12 @@ export class ManagedServerService {
       name: server.name,
       description: server.description,
       serverType: server.serverType,
-      connectionDetails: server.connectionDetails, // Assumed to be object from mapDbRowToManagedMcpServer or construction
-      mcpOptions: server.mcpOptions ? JSON.parse(server.mcpOptions) : undefined, // Parse string to object
+      connectionDetails: server.connectionDetails,
+      mcpOptions: server.mcpOptions ? JSON.parse(server.mcpOptions) : undefined,
       status: currentStatus,
       createdAt: server.createdAt.toISOString(),
       updatedAt: server.updatedAt.toISOString(),
-      tags: server.tags ? JSON.parse(server.tags) : [], // Parse JSON string to array, default to empty array
+      tags: server.tags ? JSON.parse(server.tags) : [],
     };
   }
 
@@ -184,34 +185,6 @@ export class ManagedServerService {
         this.updateServerStatusInDb(serverConfig.id, 'stopped', 'Server is disabled.');
     }
     return connectionWrapper;
-  }
-
-  public async registerServer(request: RegisterServerRequest): Promise<ManagedMcpServerDetails> {
-    const serverId = uuidv4();
-    const now = new Date();
-    const serverConfig: ManagedMcpServer = {
-      id: serverId,
-      name: request.name,
-      description: request.description,
-      serverType: request.serverType,
-      connectionDetails: request.connectionDetails,
-      mcpOptions: JSON.stringify(request.mcpOptions || {}), // Stringify incoming object
-      status: 'stopped',
-      isEnabled: true, 
-      tags: JSON.stringify(request.tags || []), // Stringify incoming array
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const params = this.mapManagedMcpServerToDbParams(serverConfig);
-    const insertQuery = `
-      INSERT INTO managed_mcp_server 
-      (id, name, description, server_type, connection_details, mcp_options, status, is_enabled, tags, created_at, updated_at, last_pinged_at, last_error) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-    `;
-    await db.query(insertQuery, params);
-    this.createAndConnectServer(serverConfig, false); 
-    return this.mapManagedMcpServerToDetails(serverConfig, 'stopped');
   }
 
   public async getAllServers(page: number = 1, limit: number = 10, statusFilter?: ServerStatus): Promise<PaginatedResponse<ManagedMcpServerDetails>> {
@@ -351,9 +324,6 @@ export class ManagedServerService {
     if (connectionWrapper) {
       connectionWrapper.stop(true); 
       this.serverConnections.delete(serverId);
-    }
-    if (this.devWatcher) {
-      this.devWatcher.removeServer(serverId);
     }
     const result = await db.query('DELETE FROM managed_mcp_server WHERE id = $1', [serverId]);
     return (result.rowCount || 0) > 0;
@@ -504,5 +474,49 @@ export class ManagedServerService {
         },
       };
     }
+  }
+
+  /**
+   * Registers a new MCP server (user-installed, not from marketplace)
+   */
+  public async registerServer(request: RegisterServerRequest): Promise<ManagedMcpServerDetails> {
+    const serverId = uuidv4();
+    const now = new Date();
+    const serverConfig: ManagedMcpServer = {
+      id: serverId,
+      name: request.name,
+      description: request.description,
+      serverType: request.serverType,
+      connectionDetails: request.connectionDetails,
+      mcpOptions: JSON.stringify(request.mcpOptions || {}),
+      status: 'stopped',
+      isEnabled: true,
+      tags: JSON.stringify(request.tags || []),
+      createdAt: now,
+      updatedAt: now,
+    };
+    const params = [
+      serverConfig.id,
+      serverConfig.name,
+      serverConfig.description,
+      serverConfig.serverType,
+      JSON.stringify(serverConfig.connectionDetails),
+      serverConfig.mcpOptions,
+      serverConfig.status,
+      serverConfig.isEnabled,
+      serverConfig.tags,
+      serverConfig.createdAt.toISOString(),
+      serverConfig.updatedAt.toISOString(),
+      null, // last_pinged_at
+      null  // last_error
+    ];
+    const insertQuery = `
+      INSERT INTO managed_mcp_server 
+      (id, name, description, server_type, connection_details, mcp_options, status, is_enabled, tags, created_at, updated_at, last_pinged_at, last_error)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    `;
+    await db.query(insertQuery, params);
+    this.createAndConnectServer(serverConfig, false);
+    return this.mapManagedMcpServerToDetails(serverConfig, 'stopped');
   }
 }

@@ -41,23 +41,21 @@ export class CentralGatewayMCPService {
 
     try {
       // 1. Extract API Key and Authenticate
+      // TEMPORARY BYPASS: Allow all requests without API key for local/dev use
       const apiKeyHeader = rawRequest.headers?.['x-api-key'] || rawRequest.headers?.['authorization']?.split(' ')?.[1];
-      if (!apiKeyHeader) {
-        throw { statusCode: 401, code: 'UNAUTHORIZED', message: 'API key is missing.' };
+      let validatedApiKeyModel: Omit<ApiKey, "hashedApiKey" | "salt"> | null = null;
+      if (apiKeyHeader) {
+        validatedApiKeyModel = await this.apiKeyService.validateApiKey(apiKeyHeader);
+        if (!validatedApiKeyModel) {
+          throw { statusCode: 401, code: 'UNAUTHORIZED', message: 'Invalid API key.' };
+        }
+        apiKeyId = validatedApiKeyModel.id;
+      } else {
+        // No API key provided, but bypass authentication for now
+        apiKeyId = undefined;
       }
-
-      // Correctly handle the return type of validateApiKey
-      const validatedApiKeyModel: Omit<ApiKey, "hashedApiKey" | "salt"> | null = await this.apiKeyService.validateApiKey(apiKeyHeader);
-      
-      if (!validatedApiKeyModel) {
-        throw { statusCode: 401, code: 'UNAUTHORIZED', message: 'Invalid API key.' };
-      }
-      // Assuming validateApiKey now returns the key details directly or null
-      // And that ApiKeyDetails is compatible with Omit<ApiKey, "hashedApiKey" | "salt">
-      apiKeyId = validatedApiKeyModel.id;
 
       // 2. Parse and Validate MCP Request Payload
-      // Assuming the actual MCP payload is in rawRequest.body
       requestBody = rawRequest.body as McpRequestPayload;
       if (!requestBody || typeof requestBody.method !== 'string') {
         throw { statusCode: 400, code: 'INVALID_REQUEST', message: 'Invalid MCP request payload or missing method.' };

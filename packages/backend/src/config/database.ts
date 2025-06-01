@@ -32,7 +32,17 @@ export default pool;
 // Example of how to create tables if they don't exist.
 // This should ideally be handled by a migration system.
 export const initializeDatabase = async () => {
-  // All table and column names are snake_case and unquoted.
+  // Table creation is now handled by 00_create_tables.sql in docker-entrypoint-initdb.d
+  // This function can be kept for other initialization tasks or if running outside Docker without initdb.d scripts.
+  // For now, we'll just log that it's being called.
+  console.log('[initializeDatabase] Called. Table creation is primarily handled by init scripts in Docker.');
+
+  // Optionally, you could still include CREATE TABLE IF NOT EXISTS here as a fallback
+  // or for environments where the initdb.d scripts aren't used.
+  // However, to strictly rely on the initdb.d scripts for table creation when using Docker,
+  // we can remove the explicit pool.query calls for table creation from here.
+
+  // Example: If you still want to ensure tables exist if not using Docker init scripts:
   const create_api_key_table_query = `
     CREATE TABLE IF NOT EXISTS api_key (
       id VARCHAR(255) PRIMARY KEY,
@@ -83,7 +93,6 @@ export const initializeDatabase = async () => {
       duration_ms INTEGER NOT NULL,
       api_key_id VARCHAR(255) REFERENCES api_key(id) ON DELETE SET NULL,
       error_message TEXT
-      -- requestPayload and responsePayload removed as per plan; consider logging snippets or storing elsewhere
     );
   `;
 
@@ -99,17 +108,27 @@ export const initializeDatabase = async () => {
     );
   `;
 
+  const create_mcp_marketplace_server_table_query = `
+    CREATE TABLE IF NOT EXISTS mcp_marketplace_server (
+      qualified_name VARCHAR(255) PRIMARY KEY,
+      display_name VARCHAR(255) NOT NULL,
+      icon_url VARCHAR(255),
+      connections JSONB NOT NULL,
+      tools JSONB
+    );
+  `;
+
   try {
+    // These will only create tables if they don't exist, serving as a fallback.
+    // In a Docker environment with initdb.d, these should find the tables already created.
     await pool.query(create_api_key_table_query);
-    console.log('api_key table checked/created successfully.');
     await pool.query(create_managed_mcp_server_table_query);
-    console.log('managed_mcp_server table checked/created successfully.');
     await pool.query(create_traffic_log_table_query);
-    console.log('traffic_log table checked/created successfully.');
     await pool.query(create_server_extension_installation_table_query);
-    console.log('server_extension_installation table checked/created successfully.');
+    await pool.query(create_mcp_marketplace_server_table_query);
+    console.log('All tables checked/created by initializeDatabase (fallback).');
   } catch (err) {
-    console.error('Error initializing database tables:', err);
-    // process.exit(1); // Optionally exit if DB setup fails
+    console.error('Error initializing database tables in initializeDatabase (fallback):', err);
+    // process.exit(1); // Decide if failure here is critical
   }
 };

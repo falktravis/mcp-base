@@ -1,137 +1,143 @@
 // packages/backend/src/services/MarketplaceService.ts
 
+import db from '../config/database';
+import { ManagedServerService } from './ManagedServerService';
+import { RegisterServerRequest, ServerType, ManagedMcpServerDetails } from '@shared-types/api-contracts';
+
 /**
  * @class MarketplaceService
  * @description Service for handling marketplace-related operations such as
- * fetching available MCP server images, configurations, or extensions.
- * This might interact with a central registry or a local cache of marketplace items.
- * (Currently a placeholder, does not interact with the database)
+ * fetching available MCP server images, configurations, or extensions from the local database.
  */
 export class MarketplaceService {
-  private availableItems: MarketplaceItem[] = [];
-
-  constructor() {
-    this.loadMarketplaceItems();
+  constructor(private managedServerService: ManagedServerService) { // Injected ManagedServerService
     console.log('[MarketplaceService] Initialized.');
-  }
-
-  private loadMarketplaceItems(): void {
-    // In a real application, this would fetch from a remote source, a database, or a configuration file.
-    // For now, we use a static list.
-    this.availableItems = [
-      {
-        id: 'mcp-echo-server-stdio',
-        name: 'MCP Echo Server (STDIO)',
-        description: 'A simple MCP server that echoes back any messages it receives. Runs as a command-line process using STDIO.',
-        version: '1.0.0',
-        type: 'stdio',
-        connectionDefaults: {
-          command: 'node', // Example: requires a compatible Node.js echo server script
-          args: ['./scripts/echo-server.js'], // Path relative to where mcp-pro might run it or a globally accessible script
-          workingDirectory: '.', // Or a specific path
-        },
-        mcpOptionsDefaults: {
-          heartbeatInterval: 30000,
-          initialPayload: { info: 'STDIO Echo server ready to connect' },
-          supportsStdioControlMessages: true,
-        },
-        tags: ['echo', 'stdio', 'basic', 'template'],
-        iconUrl: '/assets/icons/stdio-server-icon.png', // Placeholder path
-      },
-      {
-        id: 'mcp-data-processor-tcp',
-        name: 'MCP Data Processor (TCP)',
-        description: 'A template for an MCP server that processes incoming data streams over a TCP connection.',
-        version: '1.2.0',
-        type: 'tcp',
-        connectionDefaults: {
-          host: '127.0.0.1',
-          port: 6789,
-        },
-        mcpOptionsDefaults: {
-          maxConnections: 10,
-          requestTimeout: 5000,
-        },
-        tags: ['data', 'tcp', 'processing', 'template'],
-        iconUrl: '/assets/icons/tcp-server-icon.png', // Placeholder path
-      },
-      {
-        id: 'mcp-websocket-bridge',
-        name: 'MCP WebSocket Bridge',
-        description: 'Sets up an MCP server that acts as a bridge over WebSocket, useful for web client integrations.',
-        version: '0.9.0',
-        type: 'websocket',
-        connectionDefaults: {
-          path: '/mcp', // WebSocket server path
-          port: 7000,    // Port the WebSocket server will listen on
-        },
-        tags: ['websocket', 'bridge', 'web', 'template'],
-        iconUrl: '/assets/icons/websocket-server-icon.png', // Placeholder path
-      },
-    ];
-    console.log(`[MarketplaceService] Loaded ${this.availableItems.length} mock marketplace items.`);
   }
 
   /**
    * @method getAllItems
    * @description Fetches a list of all items available in the marketplace.
-   * @returns {Promise<MarketplaceItem[]>}
+   * @returns {Promise<any[]>}
    */
-  public async getAllItems(): Promise<MarketplaceItem[]> {
-    // Simulating async operation
-    return Promise.resolve([...this.availableItems]);
+  public async getAllItems(): Promise<any[]> {
+    const res = await db.query('SELECT * FROM mcp_marketplace_server');
+    return res.rows;
   }
 
   /**
    * @method getItemById
-   * @description Fetches details for a specific marketplace item by its ID.
-   * @param {string} itemId - The ID of the item.
-   * @returns {Promise<MarketplaceItem | null>}
+   * @description Fetches details for a specific marketplace item by its qualified_name.
+   * @param {string} itemId - The qualified_name of the item.
+   * @returns {Promise<any | null>}
    */
-  public async getItemById(itemId: string): Promise<MarketplaceItem | null> {
-    const item = this.availableItems.find(i => i.id === itemId);
-    // Simulating async operation
-    return Promise.resolve(item || null);
+  public async getItemById(itemId: string): Promise<any | null> {
+    const res = await db.query('SELECT * FROM mcp_marketplace_server WHERE qualified_name = $1', [itemId]);
+    return res.rows[0] || null;
   }
 
   /**
    * @method searchItems
-   * @description Searches marketplace items based on a query string (e.g., name, description, tags).
-   * (Basic placeholder implementation - case-insensitive search on name, description, and tags)
+   * @description Searches marketplace items based on a query string (e.g., display_name, icon_url, connections, tools).
    * @param {string} query - The search query.
-   * @returns {Promise<MarketplaceItem[]>}
+   * @returns {Promise<any[]>}
    */
-  public async searchItems(query: string): Promise<MarketplaceItem[]> {
-    const lowerCaseQuery = query.toLowerCase();
-    const results = this.availableItems.filter(item => 
-      item.name.toLowerCase().includes(lowerCaseQuery) || 
-      item.description.toLowerCase().includes(lowerCaseQuery) || 
-      (item.tags && item.tags.some(tag => tag.toLowerCase().includes(lowerCaseQuery)))
+  public async searchItems(query: string): Promise<any[]> {
+    const q = `%${query.toLowerCase()}%`;
+    const res = await db.query(
+      `SELECT * FROM mcp_marketplace_server WHERE 
+        LOWER(display_name) LIKE $1 OR 
+        LOWER(qualified_name) LIKE $1 OR 
+        LOWER(CAST(connections AS TEXT)) LIKE $1 OR 
+        LOWER(CAST(tools AS TEXT)) LIKE $1`,
+      [q]
     );
-    return Promise.resolve(results);
+    return res.rows;
   }
 
-  // In a future version, this could involve:
-  // - Fetching from a remote API endpoint.
-  // - Reading from a configuration file or database.
-  // - Implementing caching strategies.
-  // - Adding methods for publishing or updating items (admin functionality).
+  /**
+   * @method installServer
+   * @description Fetches a marketplace item by its ID, transforms it into a server registration request,
+   *              and registers it using the ManagedServerService.
+   * @param {string} itemId - The qualified_name of the marketplace item to install.
+   * @returns {Promise<ManagedMcpServerDetails | null>} The details of the registered server, or null if the item wasn't found.
+   * @throws {Error} If the marketplace item has invalid connection information or an unsupported server type.
+   */
+  public async installServer(itemId: string): Promise<ManagedMcpServerDetails | null> {
+    const item = await this.getItemById(itemId);
+    if (!item) {
+      console.warn(`[MarketplaceService] Marketplace item with ID ${itemId} not found for installation.`);
+      return null; // Indicates item not found
+    }
+
+    // Ensure connections is an array and has at least one entry
+    if (!Array.isArray(item.connections) || item.connections.length === 0) {
+      console.error(`[MarketplaceService] Marketplace item ${itemId} has no connection information.`);
+      throw new Error(`Marketplace item ${itemId} is missing connection information.`);
+    }
+    const connectionInfo = item.connections[0]; // Using the first connection object
+
+    // Validate required fields from connectionInfo
+    if (!connectionInfo.type || !connectionInfo.deploymentUrl) {
+      console.error(`[MarketplaceService] Marketplace item ${itemId} has invalid connection structure. Missing type or deploymentUrl.`);
+      throw new Error(`Marketplace item ${itemId} has invalid connection structure.`);
+    }
+
+    let serverType: ServerType;
+    // Map marketplace connection type to our ServerType enum
+    switch (connectionInfo.type.toLowerCase()) {
+      case 'http': // Assuming 'http' from marketplace implies 'streamable-http' for now
+      case 'streamable-http':
+        serverType = 'streamable-http';
+        break;
+      case 'sse':
+        serverType = 'sse';
+        break;
+      case 'websocket':
+        serverType = 'websocket';
+        break;
+      // Add 'stdio' case if marketplace items can be of this type and provide 'command', 'args' etc.
+      // case 'stdio':
+      //   serverType = 'stdio';
+      //   break;
+      default:
+        console.error(`[MarketplaceService] Unsupported server type '${connectionInfo.type}' for marketplace item ${itemId}.`);
+        throw new Error(`Unsupported server type '${connectionInfo.type}' from marketplace item ${itemId}.`);
+    }
+
+    const registerRequest: RegisterServerRequest = {
+      name: item.display_name || item.qualified_name, // Use display_name, fallback to qualified_name
+      description: item.description || `Installed from marketplace: ${item.display_name || item.qualified_name}`,
+      serverType: serverType,
+      connectionDetails: {
+        url: connectionInfo.deploymentUrl,
+        // For stdio, you would map command, args, workingDirectory, env from connectionInfo if they exist
+        // command: serverType === 'stdio' ? connectionInfo.command : undefined,
+        // args: serverType === 'stdio' ? connectionInfo.args : undefined,
+        // workingDirectory: serverType === 'stdio' ? connectionInfo.workingDirectory : undefined,
+        // env: serverType === 'stdio' ? connectionInfo.env : undefined,
+      },
+      mcpOptions: { // Store additional marketplace info for reference
+        marketplace_qualified_name: item.qualified_name,
+        icon_url: item.icon_url,
+        tools: item.tools, // Assuming item.tools is already in the correct format or serializable
+        original_connections: item.connections, // Store the original connections array from marketplace item
+      },
+      tags: ['marketplace-installed', item.qualified_name], // Add relevant tags for identification
+    };
+
+    try {
+      // Delegate to ManagedServerService to perform the actual registration
+      const installedServer = await this.managedServerService.registerServer(registerRequest);
+      console.log(`[MarketplaceService] Successfully registered server ${installedServer.id} from marketplace item ${itemId}.`);
+      return installedServer;
+    } catch (error) {
+      console.error(`[MarketplaceService] Error registering server from marketplace item ${itemId}:`, error);
+      // Re-throw the error to be handled by the controller or a global error handler
+      // This allows the controller to return an appropriate HTTP error response
+      throw error;
+    }
+  }
 }
 
 // Placeholder for a more sophisticated logging solution
 const logger = console;
-
-export interface MarketplaceItem {
-  id: string;
-  name: string;
-  description: string;
-  version: string;
-  type: 'stdio' | 'tcp' | 'websocket'; // Example types of servers one might find
-  connectionDefaults: Record<string, any>; // Default connection parameters (e.g., command for stdio, port for tcp)
-  mcpOptionsDefaults?: Record<string, any>; // Default MCP-specific options
-  tags?: string[];
-  iconUrl?: string; // URL for an icon representing the item
-}
-
-// Remove the instantiation line as per the change request
-// export const marketplaceService = new MarketplaceService();

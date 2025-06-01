@@ -53,12 +53,11 @@ async function main() {
     console.error('Failed to initialize the database:', error);
     process.exit(1); // Exit if DB connection fails
   }
-
   // Instantiate services after DB is ready
-  const managedServerService = new ManagedServerService();
+  const managedServerService = new ManagedServerService(); // Moved up
+  const marketplaceService = new MarketplaceService(managedServerService); // Pass ManagedServerService
   const apiKeyService = new ApiKeyService();
   const trafficMonitoringService = new TrafficMonitoringService();
-  const marketplaceService = new MarketplaceService();
   const centralGatewayService = new CentralGatewayMCPService(
     managedServerService,
     apiKeyService,

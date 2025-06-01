@@ -24,6 +24,11 @@ export class TrafficMonitoringService {
   async logRequest(
     logData: Omit<TrafficLog, 'id' | 'timestamp'>
   ): Promise<TrafficLog | null> {
+    // Skip logging if serverId is the gateway error placeholder (no valid downstream server)
+    if (logData.serverId === 'GATEWAY_ERROR_NO_SERVER_IDENTIFIED') {
+      // Reason: Skipping log to avoid foreign key violation when no valid server is identified.
+      return null;
+    }
     const newId = uuidv4();
     const sql = `
       INSERT INTO traffic_log (
