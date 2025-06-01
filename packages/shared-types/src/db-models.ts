@@ -40,10 +40,8 @@ export interface TrafficLog {
   isSuccess: boolean; // Based on MCP response or HTTP status
   durationMs: number; // Total duration for MCP Pro to handle and proxy the request
   apiKeyId?: string; // Foreign key to ApiKey.id, if an API key was used for the gateway
-  // Raw request/response can be very large. Consider storing them elsewhere (e.g., S3, logs) or only snippets/hashes.
-  // requestPayloadSnippet?: string; // Snippet or hash
-  // responsePayloadSnippet?: string; // Snippet or hash
   errorMessage?: string; // If an error occurred
+  transportType?: 'http_post' | 'sse_init' | 'sse_stream' | 'http_post_error' | 'sse_init_error'; // Added for clarity
 }
 
 export interface ApiKey {

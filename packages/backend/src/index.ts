@@ -53,22 +53,45 @@ async function main() {
     console.error('Failed to initialize the database:', error);
     process.exit(1); // Exit if DB connection fails
   }
+
   // Instantiate services after DB is ready
-  const managedServerService = new ManagedServerService(); // Moved up
-  const marketplaceService = new MarketplaceService(managedServerService); // Pass ManagedServerService
   const apiKeyService = new ApiKeyService();
   const trafficMonitoringService = new TrafficMonitoringService();
+  
+  // CentralGatewayMCPService needs a way to forward messages. This will be passed to ManagedServerService,
+  // which in turn passes it to McpConnectionWrapper instances.
+  // McpGatewayController will provide the actual implementation for this callback.
+  let forwardMessageCallbackForManagedService: any = null; 
+
   const centralGatewayService = new CentralGatewayMCPService(
-    managedServerService,
+    null as any, // managedServerService will be set later
     apiKeyService,
     trafficMonitoringService
   );
 
-  // Instantiate controllers with their dependencies
+  // McpGatewayController needs centralGatewayService and will set the SSE callback on it.
+  const mcpGatewayController = new McpGatewayController(centralGatewayService);
+
+  // Now that mcpGatewayController is instantiated, it can provide the callback
+  // that CentralGatewayMCPService uses to send messages via SSE.
+  // And CentralGatewayMCPService provides the callback for McpConnectionWrapper.
+  forwardMessageCallbackForManagedService = centralGatewayService.forwardMessageToSseClient.bind(centralGatewayService);
+  
+  // Instantiate ManagedServerService with the callback
+  const managedServerService = new ManagedServerService(false, forwardMessageCallbackForManagedService);
+  
+  // Now, set the managedServerService dependency in centralGatewayService
+  // This is a bit of a workaround for the circular dependency in terms of callback setup.
+  // A more robust solution might involve an event emitter or a dedicated messaging bus.
+  (centralGatewayService as any).managedServerService = managedServerService; 
+
+  const marketplaceService = new MarketplaceService(managedServerService);
+
+  // Instantiate other controllers with their dependencies
   const managementController = new ManagementController(managedServerService, apiKeyService);
   const marketplaceController = new MarketplaceController(marketplaceService);
   const trafficController = new TrafficController(trafficMonitoringService);
-  const mcpGatewayController = new McpGatewayController(centralGatewayService);
+  // mcpGatewayController is already instantiated
 
   // Import routes and inject controllers
   const managementApiRoutes = require('./routes/managementApi').default(managementController, marketplaceController, trafficController);

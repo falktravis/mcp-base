@@ -1,0 +1,58 @@
+### mcp_pro_tests.http
+
+# --- Variables ---
+@host = http://localhost:3001
+@managementApiBasePath = /api/management
+@mcpGatewayBasePath = /mcp
+
+# --- Authentication (Uncomment and set if needed) ---
+# @apiKey = YOUR_API_KEY_HERE
+# @bearerToken = Bearer {{apiKey}}
+
+# --- Marketplace Server ID (Set this after installing from marketplace) ---
+@marketplaceServerQualifiedName = @upstash/context7-mcp
+@encodedMarketplaceServerQualifiedName = @upstash%2Fcontext7-mcp
+
+# --- Installed Server ID (Set this from the response of the install request) ---
+@installedServerId = 1e74ba7e-e30b-40cb-9055-356895dd11e9
+
+
+### 1. Install Server from Marketplace
+# This request installs the server. Run it once.
+# Then, copy the "id" from the response data and paste it into the @installedServerId variable above.
+POST {{host}}{{managementApiBasePath}}/marketplace/items/{{encodedMarketplaceServerQualifiedName}}/install
+Content-Type: application/json
+
+{}
+
+### 2. Start the Installed Server
+# Requires @installedServerId to be set from the previous step's response.
+# Uncomment Authorization header if auth is enabled.
+POST {{host}}{{managementApiBasePath}}/servers/{{installedServerId}}/start
+Content-Type: application/json
+# Authorization: {{bearerToken}}
+
+{}
+
+### 3. Test MCP Gateway - Resolve Library ID
+# Requires @installedServerId to be set and the server to be running.
+# Uncomment Authorization header if auth is enabled for the gateway.
+POST {{host}}{{mcpGatewayBasePath}}/{{installedServerId}}/message
+Content-Type: application/json
+# Authorization: {{bearerToken}}
+
+{
+    "mcp_version": "1.0",
+    "tool_name": "resolve-library-id",
+    "tool_input": {
+        "libraryName": "react"
+    },
+    "request_id": "{{$guid}}"
+}
+
+### 4. Get Server Status
+# Useful for checking if the server is running.
+# Requires @installedServerId to be set.
+# Uncomment Authorization header if auth is enabled.
+GET {{host}}{{managementApiBasePath}}/servers/{{installedServerId}}/status
+# Authorization: {{bearerToken}}

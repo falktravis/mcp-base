@@ -14,7 +14,7 @@ import {
     ServerType,
     RegisterServerRequest
 } from '@shared-types/api-contracts';
-import { McpConnectionWrapper } from './McpConnectionWrapper';
+import { McpConnectionWrapper, ForwardMessageCallback } from './McpConnectionWrapper'; // Import ForwardMessageCallback
 import { DevWatcher } from './DevWatcher';
 import { spawn, ChildProcess } from 'child_process';
 
@@ -24,12 +24,14 @@ const logger = console;
 export class ManagedServerService {
   private serverConnections: Map<string, McpConnectionWrapper> = new Map();
   private devWatcher: DevWatcher | null = null;
+  private forwardMessageCallback?: ForwardMessageCallback;
 
-  constructor(isDevMode: boolean = false) {
+  constructor(isDevMode: boolean = false, forwardMessageCallback?: ForwardMessageCallback) {
     if (isDevMode) {
       this.devWatcher = new DevWatcher();
       logger.info('[ManagedServerService] Development mode enabled. DevWatcher initialized.');
     }
+    this.forwardMessageCallback = forwardMessageCallback;
     this.initializeManagedServersFromDB().catch(err => {
         logger.error('[ManagedServerService] Error during async initialization:', err);
     });
@@ -156,8 +158,8 @@ export class ManagedServerService {
         stdioProcess = startStdioServerCallback();
       }
     }
-
-    const connectionWrapper = new McpConnectionWrapper(serverConfig.id, serverConfig, stdioProcess);
+    // Pass the forwardMessageCallback to the McpConnectionWrapper constructor
+    const connectionWrapper = new McpConnectionWrapper(serverConfig.id, serverConfig, stdioProcess, this.forwardMessageCallback);
     
     connectionWrapper.on('statusChange', (status, serverId, details) => {
       logger.info(`[ManagedServerService] Server ${serverId} status changed to ${status}. Details: ${details || 'N/A'}`);

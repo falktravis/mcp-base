@@ -20,7 +20,7 @@ export interface PaginatedResponse<T> {
 // --- Server Management ---
 
 export type ServerType = 'sse' | 'streamable-http' | 'stdio' | 'websocket'; // Added websocket
-export type ServerStatus = 'running' | 'stopped' | 'starting' | 'stopping' | 'error' | 'unknown';
+export type ServerStatus = 'running' | 'stopped' | 'starting' | 'stopping' | 'error' | 'unknown' | 'reconnecting';
 
 export interface RegisterServerRequest {
   name: string;
