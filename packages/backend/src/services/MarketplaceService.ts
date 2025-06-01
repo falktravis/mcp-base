@@ -2,7 +2,7 @@
 
 import db from '../config/database';
 import { ManagedServerService } from './ManagedServerService';
-import { RegisterServerRequest, ServerType, ManagedMcpServerDetails } from '@shared-types/api-contracts';
+import { RegisterServerRequest, ServerType, ManagedMcpServerDetails } from 'shared-types/api-contracts';
 
 /**
  * @class MarketplaceService

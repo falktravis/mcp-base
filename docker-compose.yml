@@ -12,11 +12,11 @@ services:
       - ./packages/backend/db/seed_mcp_marketplace_server.sql:/docker-entrypoint-initdb.d/01_seed_mcp_marketplace_server.sql
     ports:
       - "5432:5432"
-
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
+      target: production
     restart: always
     depends_on:
       - postgres
@@ -24,19 +24,12 @@ services:
       - "3001:3001"
     environment:
       DATABASE_URL: postgresql://mcp_pro_user:mcp_pro_password@postgres:5432/mcp_pro_db?schema=public
-      NODE_ENV: development # Change to production for actual deployments
+      NODE_ENV: production
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: mcp_pro_user
       POSTGRES_PASSWORD: mcp_pro_password
       POSTGRES_DB: mcp_pro_db
-      # Add other backend environment variables here
-    volumes:
-      - ./packages/backend:/usr/src/app/packages/backend
-      - ./packages/shared-types:/usr/src/app/packages/shared-types
-      # For development, mount node_modules from host to container to avoid reinstalling on every change
-      # - ./packages/backend/node_modules:/usr/src/app/packages/backend/node_modules
-    command: ["npm", "run", "dev", "--workspace=backend"]
 
   frontend:
     build:

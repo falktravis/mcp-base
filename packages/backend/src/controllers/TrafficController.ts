@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { TrafficMonitoringService } from '../services/TrafficMonitoringService';
-import { ApiResponse, TrafficStatsResponse } from '@shared-types/api-contracts';
+import { ApiResponse, TrafficStatsResponse } from 'shared-types/api-contracts';
 
 const handleServiceCall = async <T>(
     res: Response, 

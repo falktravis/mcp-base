@@ -2,8 +2,8 @@
 // and their outcomes to the PostgreSQL database. It will also provide methods to query this data.
 
 import { query } from '../config/database'; // Uses the exported query function from database.ts
-import { TrafficLog } from '@shared-types/db-models'; // Corrected: TrafficLog is in db-models
-import { PaginatedResponse } from '@shared-types/api-contracts'; // PaginatedResponse is in api-contracts
+import { TrafficLog } from 'shared-types/db-models'; // Corrected: TrafficLog is in db-models
+import { PaginatedResponse } from 'shared-types/api-contracts'; // PaginatedResponse is in api-contracts
 import { v4 as uuidv4 } from 'uuid'; // Using uuid for ID generation
 
 // Placeholder for a more sophisticated logging solution

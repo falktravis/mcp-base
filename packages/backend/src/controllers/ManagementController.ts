@@ -12,8 +12,8 @@ import {
     CreateApiKeyResponse,
     ServerStatusResponse,
     ServerStatus
-} from '@shared-types/api-contracts'; // Corrected import path
-import { ApiKey } from '@shared-types/db-models'; // For mapping ApiKeyService response
+} from 'shared-types/api-contracts'; // Corrected import path
+import { ApiKey } from 'shared-types/db-models'; // For mapping ApiKeyService response
 
 const handleServiceCall = async <T>(
     res: Response, 

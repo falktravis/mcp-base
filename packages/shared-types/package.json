@@ -4,6 +4,20 @@
   "private": true,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./api-contracts": {
+      "types": "./dist/api-contracts.d.ts",
+      "default": "./dist/api-contracts.js"
+    },
+    "./db-models": {
+      "types": "./dist/db-models.d.ts",
+      "default": "./dist/db-models.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rimraf dist"

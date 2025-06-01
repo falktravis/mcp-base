@@ -4,7 +4,7 @@ import {
     ApiResponse,
     PaginatedResponse,
     ManagedMcpServerDetails
-} from '@shared-types/api-contracts';
+} from 'shared-types/api-contracts';
 
 // Re-using a similar handler as in ManagementController for consistency
 const handleServiceCall = async <T>(

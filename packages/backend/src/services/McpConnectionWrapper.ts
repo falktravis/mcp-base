@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { ChildProcess } from 'child_process'; // Added for stdioProcess type
-import { ManagedMcpServer } from '@shared-types/db-models'; // Added for serverConfig type
+import { ManagedMcpServer } from 'shared-types/db-models'; // Added for serverConfig type
 
 // Placeholder types for @mcp/sdk
 interface MCPMessage {
@@ -127,12 +127,17 @@ class MCPConnection extends EventEmitter {
 }
 // End placeholder types for @mcp/sdk
 // Adjust import paths for shared-types
-import { ServerStatus, McpRequestPayload, McpResponsePayload, ServerType, McpError } from '@shared-types/api-contracts'; // Import McpError
+import { ServerStatus, McpRequestPayload, McpResponsePayload, ServerType, McpError, McpErrorCode } from 'shared-types/api-contracts'; // Import McpErrorCode
 
 const CONNECTION_TIMEOUT_MS = 30000; // 30 seconds connection timeout
 
 // Define the type for the callback function that forwards messages to the SSE client
-export type ForwardMessageCallback = (serverId: string, sessionId: string | null, message: McpResponsePayload | McpRequestPayload) => void;
+// This callback is ultimately McpGatewayController.forwardMessageToClientSession
+// It expects (mcpSessionId: string, message: any, serverId: string)
+// McpConnectionWrapper itself is not multi-session aware for a single serverId connection.
+// It will call this with its serverId. The actual mcpSessionId will be determined by the caller (CentralGatewayMCPService)
+// when relaying server-initiated messages to potentially multiple client sessions.
+export type ServerInitiatedMessageCallback = (targetServerId: string, message: McpResponsePayload | McpRequestPayload) => void;
 
 
 // Define more specific types for events if needed
@@ -160,18 +165,18 @@ export class McpConnectionWrapper extends EventEmitter implements McpConnectionW
   private isExplicitlyClosed: boolean = false;
   private connectTimeoutId: NodeJS.Timeout | null = null;
   private reconnectTimeoutId: NodeJS.Timeout | null = null;
-  private forwardMessageCallback?: ForwardMessageCallback;
-  private pendingRequestIds: Set<string> = new Set(); // Added to track pending request IDs
+  private serverInitiatedMessageCallback?: ServerInitiatedMessageCallback;
+  private pendingRequestIds: Set<string> = new Set();
 
 
   constructor(
     public readonly serverId: string,
     private serverConfig: ManagedMcpServer, // From DB
     private stdioProcess?: ChildProcess, // For stdio connections
-    forwardMessageCallback?: ForwardMessageCallback // Add the callback to the constructor
+    serverInitiatedMessageCallback?: ServerInitiatedMessageCallback
   ) {
     super();
-    this.forwardMessageCallback = forwardMessageCallback;
+    this.serverInitiatedMessageCallback = serverInitiatedMessageCallback;
     this.updateStatus('stopped');
   }
 
@@ -318,107 +323,95 @@ export class McpConnectionWrapper extends EventEmitter implements McpConnectionW
     this.updateStatus('starting', `Initializing connection. Type: ${this.serverConfig.serverType}`);
 
 
-    this.sdkConnection.on('open', () => {
-      this.clearConnectTimeout(); // Clear connection timeout on successful open
-      this.reconnectAttempts = 0;
-      this.updateStatus('running', 'Connection established.');
-      // Initialize request logic (if any) can go here or be triggered externally
-    });
+    if (this.sdkConnection) { // Ensure sdkConnection is not null
+      this.sdkConnection.on('open', () => {
+        this.clearConnectTimeout(); // Clear connection timeout on successful open
+        this.reconnectAttempts = 0;
+        this.updateStatus('running', 'Connection established.');
+        // Initialize request logic (if any) can go here or be triggered externally
+      });
 
-    this.sdkConnection.on('message', (message: MCPMessage) => {
-      console.log(`[MCPConnectionWrapper-${this.serverId}] SDK Message: ID ${message.id}, Method ${message.method || 'N/A'}`);
-      
-      // If this message ID is for a pending request, sendRequest's listener will handle it.
-      // The general handler should ignore it to prevent double processing or incorrect forwarding.
-      if (message.id && this.pendingRequestIds.has(message.id)) {
-        console.log(`[MCPConnectionWrapper-${this.serverId}] Ignoring message ID ${message.id} as it's a response to a pending request.`);
-        return;
-      }
+      this.sdkConnection.on('message', (message: MCPMessage) => {
+        console.log(`[MCPConnectionWrapper-${this.serverId}] SDK Message: ID ${message.id}, Method ${message.method || 'N/A'}`);
+        
+        if (message.id && this.pendingRequestIds.has(message.id)) {
+          return;
+        }
 
-      let adaptedMessage: McpResponsePayload | McpRequestPayload;
+        let adaptedMessage: McpResponsePayload | McpRequestPayload;
 
-      // Check if it's a server-initiated request/notification (has a method)
-      // or a response to a client request (has result or error, but no method from client)
-      if (message.method && message.method !== '$/cancelRequest') { 
-        adaptedMessage = {
-          mcp_version: message.jsonrpc === '2.0' ? '1.0' : '1.0', // Adjust as needed
-          request_id: message.id || MCPConnection.generateRequestId(), 
-          method: message.method,
-          params: message.params
-        };
-      } else { // Assumed to be a response
-        adaptedMessage = {
-          mcp_version: message.jsonrpc === '2.0' ? '1.0' : '1.0', // Adjust as needed
-          request_id: message.id, 
-          result: message.result,
-          error: message.error ? { 
-            code: message.error.code || -32000, 
-            message: message.error.message || 'Unknown error from server',
-            data: message.error.data 
-          } as McpError : undefined
-        };
-      }
-      
-      this.emit('message', message, this.serverId); // Emit original SDK message locally if needed for other listeners
+        if (message.method && message.method !== '$/cancelRequest') { 
+          adaptedMessage = {
+            mcp_version: message.jsonrpc === '2.0' ? '1.0' : '1.0', 
+            request_id: message.id || MCPConnection.generateRequestId(), 
+            method: message.method,
+            params: message.params
+          };
+        } else { 
+          adaptedMessage = {
+            mcp_version: message.jsonrpc === '2.0' ? '1.0' : '1.0', 
+            request_id: message.id, 
+            result: message.result,
+            error: message.error ? { 
+              code: message.error.code || McpErrorCode.INTERNAL_ERROR, 
+              message: message.error.message || 'Unknown error from server',
+              data: message.error.data 
+            } as McpError : undefined
+          };
+        }
+        
+        this.emit('message', message, this.serverId); 
 
-      if (this.forwardMessageCallback) {
-        // For streamable-http, the sessionId is typically managed by the controller that handles the SSE connection.
-        // McpConnectionWrapper itself is not session-aware for multiple clients over one serverId's SSE stream.
-        // Passing null for sessionId; CentralGatewayMCPService/McpGatewayController will determine the target session(s).
-        this.forwardMessageCallback(this.serverId, null, adaptedMessage);
-      } else {
-        // This warning is important if the callback is expected to be set.
-        // console.warn(`[MCPConnectionWrapper-${this.serverId}] forwardMessageCallback not set. Cannot forward message to SSE client.`);
-      }
-    });
+        if (this.serverInitiatedMessageCallback && (!message.id || !this.pendingRequestIds.has(message.id))) {
+          console.log(`[MCPConnectionWrapper-${this.serverId}] Forwarding server-initiated/unsolicited message (method: ${message.method}, id: ${message.id}) via callback.`);
+          this.serverInitiatedMessageCallback(this.serverId, adaptedMessage);
+        } else if ((!message.id || !this.pendingRequestIds.has(message.id)) && !this.serverInitiatedMessageCallback) {
+          console.warn(`[MCPConnectionWrapper-${this.serverId}] serverInitiatedMessageCallback not set. Cannot forward server-initiated/unsolicited message.`);
+        }
+      });
 
-    this.sdkConnection.on('error', (error: Error) => {
-      console.error(`[MCPConnectionWrapper-${this.serverId}] SDK Connection Error: ${error.message}`, error);
-      this.lastError = error.message;
-      // Check if connection was already starting/running, or if this is an error during initial connect() promise
-      if (this.currentStatus === 'running' || this.currentStatus === 'starting') {
-        this.updateStatus('error', `SDK Error: ${error.message}`);
-      } // else, connect() promise will handle its own failure status
-      this.emit('error', error, this.serverId);
-      if (!this.isExplicitlyClosed) {
-        this.scheduleReconnect();
-      }
-    });
-
-    this.sdkConnection.on('close', (code?: number, reason?: string) => {
-      const logMessage = `SDK Connection Closed. ServerId: ${this.serverId}, Code: ${code === undefined ? 'N/A' : code}, Reason: ${reason || 'N/A'}`;
-      console.log(`[MCPConnectionWrapper-${this.serverId}] ${logMessage}`);
-      this.clearConnectTimeout(); // Important if close happens before 'open' or timeout fires
-
-      // Avoid changing status if it's already 'stopped' by explicit action or 'error' by a preceding error event
-      if (this.currentStatus !== 'stopped' && this.currentStatus !== 'error') {
+      this.sdkConnection.on('error', (error: Error) => {
+        console.error(`[MCPConnectionWrapper-${this.serverId}] SDK Connection Error: ${error.message}`, error);
+        this.lastError = error.message;
+        if (this.currentStatus === 'running' || this.currentStatus === 'starting') {
+          this.updateStatus('error', `SDK Error: ${error.message}`);
+        }
+        this.emit('error', error, this.serverId);
         if (!this.isExplicitlyClosed) {
-          this.updateStatus('reconnecting', logMessage);
           this.scheduleReconnect();
-        } else {
+        }
+      });
+
+      this.sdkConnection.on('close', (code?: number, reason?: string) => {
+        const logMessage = `SDK Connection Closed. ServerId: ${this.serverId}, Code: ${code === undefined ? 'N/A' : code}, Reason: ${reason || 'N/A'}`;
+        console.log(`[MCPConnectionWrapper-${this.serverId}] ${logMessage}`);
+        this.clearConnectTimeout(); 
+
+        if (this.currentStatus !== 'stopped' && this.currentStatus !== 'error') {
+          if (!this.isExplicitlyClosed) {
+            this.updateStatus('reconnecting', logMessage);
+            this.scheduleReconnect();
+          } else {
+            this.updateStatus('stopped', `Connection closed. ${reason || ''}`.trim());
+          }
+        } else if (this.isExplicitlyClosed && this.currentStatus !== 'stopped') {
           this.updateStatus('stopped', `Connection closed. ${reason || ''}`.trim());
         }
-      } else if (this.isExplicitlyClosed && this.currentStatus !== 'stopped') {
-        // If explicitly closed but status wasn't 'stopped' yet (e.g. was 'reconnecting')
-        this.updateStatus('stopped', `Connection closed. ${reason || ''}`.trim());
-      }
-      
-      this.emit('close', this.serverId, code, reason);
-      // The SDK connection object might be cleaned up by a new connect() call or explicitly in stop()
-    });
+        
+        this.emit('close', this.serverId, code, reason);
+        this.sdkConnection = null; 
+      });
+    } // End of if (this.sdkConnection)
     
     this.connectTimeoutId = setTimeout(() => {
-        if (this.currentStatus === 'starting') {
+        if (this.currentStatus === 'starting' && this.sdkConnection) { 
             const timeoutMessage = `Connection attempt timed out after ${CONNECTION_TIMEOUT_MS / 1000}s.`;
             console.error(`[MCPConnectionWrapper-${this.serverId}] ${timeoutMessage}`);
             this.updateStatus('error', timeoutMessage);
-            this.lastError = timeoutMessage; // Ensure lastError is set
-            this.emit('error', new Error(timeoutMessage), this.serverId); // Emit an error event
+            this.lastError = timeoutMessage; 
+            this.emit('error', new Error(timeoutMessage), this.serverId); 
             
-            // Attempt to clean up the SDK connection if it exists
-            if (this.sdkConnection) {
-                this.sdkConnection.close(); // This might trigger the 'close' listener above
-            }
+            this.sdkConnection.close(); 
             
             if (!this.isExplicitlyClosed) {
                 this.scheduleReconnect();
@@ -427,21 +420,18 @@ export class McpConnectionWrapper extends EventEmitter implements McpConnectionW
     }, CONNECTION_TIMEOUT_MS);
 
     try {
-      // this.updateStatus('starting', `Attempting to connect. Type: ${this.serverConfig.serverType}`); // Moved up
+      if (!this.sdkConnection) { 
+        throw new Error("sdkConnection not initialized before connect call");
+      }
       await this.sdkConnection.connect();
-      // If connect() resolves, the 'open' event should have fired and cleared the connectTimeoutId.
-      // If connect() was very fast and 'open' fired before this line, status is 'running'.
     } catch (error: any) {
-      this.clearConnectTimeout(); // Ensure timeout is cleared on connect() promise rejection
+      this.clearConnectTimeout(); 
       console.error(`[MCPConnectionWrapper-${this.serverId}] Failed to connect (connect() rejected):`, error.message);
       this.lastError = error.message;
-      // Avoid double status update if 'error' or 'close' event already handled it.
-      // updateStatus is typically called by the event handlers.
-      // If connect() promise rejects, it's a definitive failure to establish connection.
       if (this.currentStatus !== 'error' && this.currentStatus !== 'reconnecting' && this.currentStatus !== 'stopped') {
          this.updateStatus('error', `Connection failed: ${error.message}`);
       }
-      this.emit('error', error, this.serverId); // Emit error for connect failure
+      this.emit('error', error, this.serverId); 
       if (!this.isExplicitlyClosed) {
         this.scheduleReconnect();
       }
@@ -506,7 +496,7 @@ export class McpConnectionWrapper extends EventEmitter implements McpConnectionW
         mcp_version: payload.mcp_version,
         request_id: payload.request_id,
         error: {
-          code: -32000, 
+          code: McpErrorCode.SERVER_CONNECTION_ERROR, 
           message: `MCP Wrapper: Connection to server ${this.serverId} is not active. Status: ${this.currentStatus}`,
         },
       };
@@ -514,13 +504,15 @@ export class McpConnectionWrapper extends EventEmitter implements McpConnectionW
 
     return new Promise<McpResponsePayload>((resolve, reject) => {
       const requestId = payload.request_id;
-      this.pendingRequestIds.add(requestId); // Add to pending requests
+      this.pendingRequestIds.add(requestId); 
       let timeoutId: NodeJS.Timeout | null = null;
 
       const cleanupPendingRequest = () => {
         if (timeoutId) clearTimeout(timeoutId);
-        this.sdkConnection?.removeListener('message', messageListener);
-        this.pendingRequestIds.delete(requestId); // Remove from pending requests
+        if (this.sdkConnection) {
+            this.sdkConnection.removeListener('message', messageListener);
+        }
+        this.pendingRequestIds.delete(requestId); 
       };
 
       const messageListener = (message: MCPMessage) => {
@@ -533,7 +525,7 @@ export class McpConnectionWrapper extends EventEmitter implements McpConnectionW
               mcp_version: payload.mcp_version,
               request_id: String(message.id || requestId),
               error: {
-                code: message.error.code || -32000,
+                code: message.error.code || McpErrorCode.INTERNAL_ERROR, 
                 message: message.error.message || 'Unknown SDK error',
                 data: message.error.data,
               },
@@ -547,44 +539,68 @@ export class McpConnectionWrapper extends EventEmitter implements McpConnectionW
           }
         }
       };
-
-      this.sdkConnection?.on('message', messageListener);
-
-      // Set a timeout for the response
-      const requestTimeoutMs = (this.sdkConnection as any).options?.requestTimeoutMs || CONNECTION_TIMEOUT_MS; 
+      
+      if (this.sdkConnection) {
+        this.sdkConnection.on('message', messageListener);
+      } else {
+        cleanupPendingRequest();
+        resolve({
+            mcp_version: payload.mcp_version,
+            request_id: requestId,
+            error: {
+                code: McpErrorCode.SERVER_CONNECTION_ERROR, 
+                message: `MCP Wrapper: SDK Connection was null when trying to listen for response to ${requestId}.`,
+            },
+        });
+        return; 
+      }
+      
+      // Ensure sdkConnection is valid before accessing its options
+      const requestTimeoutMs = this.sdkConnection && (this.sdkConnection as any).options?.requestTimeoutMs ? 
+                               (this.sdkConnection as any).options.requestTimeoutMs : CONNECTION_TIMEOUT_MS;
       timeoutId = setTimeout(() => {
-        // No need to call this.sdkConnection?.removeListener here as cleanupPendingRequest handles it
         cleanupPendingRequest();
         console.error(`[MCPConnectionWrapper-${this.serverId}] Timeout waiting for response to request ID ${requestId}`);
-        resolve({ // Resolve with error on timeout
+        resolve({ 
           mcp_version: payload.mcp_version,
           request_id: requestId,
           error: {
-            code: -32006, // Custom timeout error code
+            code: McpErrorCode.REQUEST_TIMEOUT, 
             message: `Timeout waiting for response from server ${this.serverId} for request ID ${requestId}`,
           },
         });
       }, requestTimeoutMs);
 
       console.log(`[MCPConnectionWrapper-${this.serverId}] Sending SDK request: Method ${payload.method}, ID ${requestId}`);
-      this.sdkConnection?.sendRequest({
-        jsonrpc: '2.0',
-        id: requestId,
-        method: payload.method,
-        params: payload.params,
-      }).catch(sendError => {
-        // No need to call this.sdkConnection?.removeListener here as cleanupPendingRequest handles it
+      if (this.sdkConnection) {
+        this.sdkConnection.sendRequest({
+          jsonrpc: '2.0',
+          id: requestId,
+          method: payload.method,
+          params: payload.params,
+        }).catch(sendError => {
+          cleanupPendingRequest();
+          console.error(`[MCPConnectionWrapper-${this.serverId}] Error sending request ID ${requestId}:`, sendError);
+          resolve({ 
+              mcp_version: payload.mcp_version,
+              request_id: requestId,
+              error: {
+                  code: McpErrorCode.SERVER_SEND_ERROR, 
+                  message: `Error sending request to server ${this.serverId}: ${(sendError as Error).message}`,
+              },
+          });
+        });
+      } else {
         cleanupPendingRequest();
-        console.error(`[MCPConnectionWrapper-${this.serverId}] Error sending request ID ${requestId}:`, sendError);
-        resolve({ // Resolve with error if send fails
+        resolve({
             mcp_version: payload.mcp_version,
             request_id: requestId,
             error: {
-                code: -32007, // Custom send error code
-                message: `Error sending request to server ${this.serverId}: ${sendError.message}`,
+                code: McpErrorCode.SERVER_CONNECTION_ERROR, 
+                message: `MCP Wrapper: SDK Connection was null when trying to send request ${requestId}.`,
             },
         });
-      });
+      }
     });
   }
 

@@ -29,51 +29,71 @@ COPY tsconfig.base.json ./tsconfig.base.json
 # Set default command for development (will be overridden by docker-compose)
 CMD [ "npm", "run", "dev", "--workspace=frontend" ]
 
-# --- Builder Stage ---
-FROM base AS builder
+# --- Builder Base Stage ---
+FROM base AS builder_base
+# Set a specific npm version known to work well with workspaces
+RUN npm install -g npm@9.8.1
+# Create package directories early - actual content will be copied in subsequent stages
+RUN mkdir -p /usr/src/app/packages/frontend /usr/src/app/packages/shared-types
 
-# Copy root package.json and lockfile
-COPY package.json package-lock.json ./
-
-# Create package directories and copy their manifests
-RUN mkdir -p packages/frontend packages/shared-types
-COPY packages/frontend/package.json ./packages/frontend/
+# --- Build shared-types ---
+FROM builder_base AS shared_types_builder
+WORKDIR /usr/src/app
+# Copy files necessary for shared-types build
+COPY tsconfig.base.json ./
 COPY packages/shared-types/package.json ./packages/shared-types/
-
-# Copy the rest of the monorepo source code
-COPY . .
-
-# Ensure TypeScript base config is always present in the container
-COPY tsconfig.base.json ./tsconfig.base.json
-
-# Install dependencies for frontend and its dependencies
+COPY packages/shared-types/tsconfig.json ./packages/shared-types/
+COPY packages/shared-types/src ./packages/shared-types/src/
+# Build shared-types
+WORKDIR /usr/src/app/packages/shared-types
 RUN npm install
+RUN npm run build
 
-# Build shared-types first
-RUN npm run build --workspace=shared-types
+# --- Build frontend (this replaces the old 'builder' stage) ---
+FROM builder_base AS frontend_builder
+WORKDIR /usr/src/app
+# Copy files necessary for frontend build and root workspace context
+COPY tsconfig.base.json ./
+COPY package.json package-lock.json* ./
+# Copy frontend specific package manifest and config files
+COPY packages/frontend/package.json ./packages/frontend/
+COPY packages/frontend/tsconfig.json ./packages/frontend/
+COPY packages/frontend/next.config.ts ./packages/frontend/next.config.ts
+COPY packages/frontend/next-env.d.ts ./packages/frontend/next-env.d.ts
+# Copy all frontend source code and public assets
+COPY packages/frontend/src ./packages/frontend/src/
+COPY packages/frontend/public ./packages/frontend/public/
 
-# Build frontend
+# Copy the pre-built shared-types package to be available for the frontend
+COPY --from=shared_types_builder /usr/src/app/packages/shared-types ./packages/shared-types
+
+# Install all workspace dependencies (should resolve shared-types from the copied files)
+# and then build the frontend application
+RUN npm install --legacy-peer-deps
 RUN npm run build --workspace=frontend
-
 
 # --- Production Stage ---
 FROM node:22-alpine AS production
 
 WORKDIR /usr/src/app
-
 ENV NODE_ENV=production
 
-# Copy root package.json (needed for workspace structure)
+# Copy root package.json (needed for workspace structure/metadata)
 COPY package.json ./
 # Copy frontend package.json (needed for npm start --workspace=frontend)
 COPY packages/frontend/package.json ./packages/frontend/
 
-# Copy production dependencies from builder stage
-COPY --from=builder /usr/src/app/node_modules ./node_modules
+# Copy production dependencies from the frontend_builder stage
+# This includes the root node_modules which should have shared-types resolved within it or as a peer
+COPY --from=frontend_builder /usr/src/app/node_modules ./node_modules
 
-# Copy built frontend application and shared-types from builder stage
-COPY --from=builder /usr/src/app/packages/frontend ./packages/frontend
-COPY --from=builder /usr/src/app/packages/shared-types ./packages/shared-types
+# Copy built frontend application (e.g., .next folder, public assets, etc.)
+COPY --from=frontend_builder /usr/src/app/packages/frontend ./packages/frontend
+
+# Copy shared-types artifacts as well, in case they are needed directly at runtime
+# (e.g., if frontend references shared-types/dist directly in some non-bundled way, or for consistency)
+COPY --from=shared_types_builder /usr/src/app/packages/shared-types/package.json ./packages/shared-types/package.json
+COPY --from=shared_types_builder /usr/src/app/packages/shared-types/dist ./packages/shared-types/dist
 
 # Expose port
 EXPOSE 3000

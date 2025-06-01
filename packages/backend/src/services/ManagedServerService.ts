@@ -2,7 +2,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import db from '../config/database'; // pg.Pool instance
-import { ManagedMcpServer } from '@shared-types/db-models';
+import { ManagedMcpServer } from 'shared-types/db-models';
 import { 
     UpdateServerConfigRequest, 
     ServerStatus, 
@@ -12,9 +12,10 @@ import {
     McpRequestPayload,
     McpResponsePayload,
     ServerType,
-    RegisterServerRequest
-} from '@shared-types/api-contracts';
-import { McpConnectionWrapper, ForwardMessageCallback } from './McpConnectionWrapper'; // Import ForwardMessageCallback
+    RegisterServerRequest,
+    McpError // Added McpError for consistency, though not directly used in this snippet
+} from 'shared-types/api-contracts';
+import { McpConnectionWrapper, ServerInitiatedMessageCallback } from './McpConnectionWrapper'; // Changed ForwardMessageCallback to ServerInitiatedMessageCallback
 import { DevWatcher } from './DevWatcher';
 import { spawn, ChildProcess } from 'child_process';
 
@@ -24,17 +25,31 @@ const logger = console;
 export class ManagedServerService {
   private serverConnections: Map<string, McpConnectionWrapper> = new Map();
   private devWatcher: DevWatcher | null = null;
-  private forwardMessageCallback?: ForwardMessageCallback;
+  // private forwardMessageCallback?: ForwardMessageCallback; // Old callback type
+  private serverInitiatedMessageCallback?: ServerInitiatedMessageCallback; // New callback type
 
-  constructor(isDevMode: boolean = false, forwardMessageCallback?: ForwardMessageCallback) {
+  constructor(isDevMode: boolean = false /*, forwardMessageCallback?: ForwardMessageCallback */) { // Removed old callback from constructor params
     if (isDevMode) {
       this.devWatcher = new DevWatcher();
       logger.info('[ManagedServerService] Development mode enabled. DevWatcher initialized.');
     }
-    this.forwardMessageCallback = forwardMessageCallback;
+    // this.forwardMessageCallback = forwardMessageCallback; // Removed old assignment
     this.initializeManagedServersFromDB().catch(err => {
         logger.error('[ManagedServerService] Error during async initialization:', err);
     });
+  }
+
+  /**
+   * Sets the callback function to be invoked when a managed server connection
+   * emits a server-initiated message that needs to be relayed.
+   * This is typically called by CentralGatewayMCPService during its initialization.
+   */
+  public setServerInitiatedMessageCallback(callback: ServerInitiatedMessageCallback): void {
+    this.serverInitiatedMessageCallback = callback;
+    logger.info('[ManagedServerService] Server-initiated message callback registered.');
+    // If there are already active connections, we might want to update them, 
+    // but typically this is set once at startup before connections are active or re-established.
+    // For simplicity, new connections will get it. Existing ones would need an update mechanism if this changes mid-flight.
   }
 
   private async initializeManagedServersFromDB(): Promise<void> {
@@ -159,7 +174,12 @@ export class ManagedServerService {
       }
     }
     // Pass the forwardMessageCallback to the McpConnectionWrapper constructor
-    const connectionWrapper = new McpConnectionWrapper(serverConfig.id, serverConfig, stdioProcess, this.forwardMessageCallback);
+    const connectionWrapper = new McpConnectionWrapper(
+        serverConfig.id, 
+        serverConfig, 
+        stdioProcess, 
+        this.serverInitiatedMessageCallback // Pass the new callback
+    );
     
     connectionWrapper.on('statusChange', (status, serverId, details) => {
       logger.info(`[ManagedServerService] Server ${serverId} status changed to ${status}. Details: ${details || 'N/A'}`);

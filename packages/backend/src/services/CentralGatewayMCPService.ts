@@ -2,12 +2,13 @@
 // It will receive MCP requests, authenticate them (e.g., API Key),
 // and then use ManagedServerService to route the request to the appropriate downstream MCP server.
 
-import { McpRequestPayload, McpResponsePayload, McpError, ServerType } from '@shared-types/api-contracts'; // Corrected import path
+import { McpRequestPayload, McpResponsePayload, McpError as McpErrorInterface, ServerType, McpErrorCode } from 'shared-types/api-contracts'; // Corrected import path
 import { ManagedServerService } from './ManagedServerService';
 import { ApiKeyService } from './ApiKeyService';
 import { TrafficMonitoringService } from './TrafficMonitoringService';
 import { v4 as uuidv4 } from 'uuid';
-import { ApiKey } from '@shared-types/db-models'; // Import ApiKey DB model for validateApiKey return type
+import { ApiKey } from 'shared-types/db-models'; // Import ApiKey DB model for validateApiKey return type
+import { SseSendDelegate } from '../controllers/McpGatewayController'; // Import the delegate type
 
 const GATEWAY_ERROR_SERVER_ID_PLACEHOLDER = 'GATEWAY_ERROR_NO_SERVER_IDENTIFIED';
 
@@ -25,44 +26,51 @@ interface JsonRpcResponse {
   error?: JsonRpcErrorObject;
 }
 
-// Define the shape of the raw request object more precisely, especially for the new flag
+// Define the shape of the raw request object more precisely
 interface GatewayRawRequest {
     params?: { serverId?: string };
-    body?: any; // McpRequestPayload or { tool_name, tool_input } or JSON-RPC like { method, params, id }
+    body?: any; 
     headers?: Record<string, string | string[] | undefined>;
     ip?: string;
-    isSseInitialization?: boolean; // Flag for SSE setup
 }
 
 // Type for the SSE callback function
-type SseSendCallback = (serverId: string, sessionId: string | null, message: JsonRpcResponse) => boolean;
+// type SseSendCallback = (mcpSessionId: string, message: any, serverId: string) => boolean; // Old type
 
 export class CentralGatewayMCPService {
   private managedServerService: ManagedServerService;
   private apiKeyService: ApiKeyService;
   private trafficMonitoringService: TrafficMonitoringService;
-  private sseSendCallback?: SseSendCallback;
+  // private sseSendCallback?: SseSendCallback; // Old property
+  private sseSendDelegate?: SseSendDelegate; // New property using the imported type
 
   constructor(
     managedServerService: ManagedServerService,
     apiKeyService: ApiKeyService,
     trafficMonitoringService: TrafficMonitoringService,
+    // sseSendDelegate will be injected after McpGatewayController is instantiated
   ) {
     this.managedServerService = managedServerService;
     this.apiKeyService = apiKeyService;
     this.trafficMonitoringService = trafficMonitoringService;
-    console.log('CentralGatewayMCPService initialized with all dependencies');
+    console.log('CentralGatewayMCPService initialized with core dependencies');
+
+    // Register the callback with ManagedServerService for server-initiated messages
+    this.managedServerService.setServerInitiatedMessageCallback(
+      this.handleServerInitiatedMessage.bind(this)
+    );
   }
 
-  public setSseSendCallback(callback: SseSendCallback): void {
-    this.sseSendCallback = callback;
-    console.log('[CentralGatewayMCPService] SSE send callback registered.');
+  public setSseSendDelegate(delegate: SseSendDelegate): void {
+    this.sseSendDelegate = delegate;
+    console.log('[CentralGatewayMCPService] SSE send delegate registered.');
   }
 
   // Method to handle incoming MCP requests (generic for tool_call, resource_request, etc.)
   async handleMcpRequest(
     rawRequest: GatewayRawRequest, // Use the more specific type
     sourceIp?: string,
+    mcpSessionId?: string, // Added mcpSessionId
   ): Promise<JsonRpcResponse> { 
     const gatewayRequestId = uuidv4(); 
     let apiKeyId: string | undefined;
@@ -72,8 +80,7 @@ export class CentralGatewayMCPService {
     let loggedMcpMethod: string | undefined;
 
     const clientRequestBody = rawRequest.body;
-    const jsonRpcRequestId = clientRequestBody?.id; 
-    const isSseInit = rawRequest.isSseInitialization === true;
+    const jsonRpcRequestId = (clientRequestBody?.id !== undefined) ? clientRequestBody.id : null;
 
     try {
       // 1. Extract API Key and Authenticate
@@ -84,17 +91,23 @@ export class CentralGatewayMCPService {
       if (apiKeyHeader) {
         validatedApiKeyModel = await this.apiKeyService.validateApiKey(String(apiKeyHeader)); // Ensure string
         if (!validatedApiKeyModel) {
-          throw { statusCode: 401, code: 'UNAUTHORIZED', message: 'Invalid API key.' };
+          throw { statusCode: 401, mcpErrorCode: McpErrorCode.UNAUTHENTICATED, message: 'Invalid API key.' };
         }
         apiKeyId = validatedApiKeyModel.id;
       } else {
-        apiKeyId = undefined; // Or handle as an error if API key is always required
+        apiKeyId = undefined; 
       }
 
       // 2. Extract serverId from path and request details from body
       serverIdFromPath = rawRequest.params?.serverId;
       if (!serverIdFromPath) {
-        throw { statusCode: 400, code: 'NO_TARGET_SERVER', message: 'Server ID must be provided in the URL path.' };
+        throw { statusCode: 400, mcpErrorCode: McpErrorCode.INVALID_PARAMS, message: 'Server ID must be provided in the URL path.' };
+      }
+
+      if (mcpSessionId) {
+        console.log(`[CentralGatewayMCPService] Processing request for serverId: ${serverIdFromPath}, mcpSessionId: ${mcpSessionId}, gatewayRequestId: ${gatewayRequestId}`);
+      } else {
+        console.log(`[CentralGatewayMCPService] Processing request for serverId: ${serverIdFromPath} (no mcpSessionId), gatewayRequestId: ${gatewayRequestId}`);
       }
 
       const toolName = clientRequestBody?.tool_name;
@@ -114,12 +127,12 @@ export class CentralGatewayMCPService {
         loggedMcpMethod = actualDownstreamMethod;
       } else {
         console.error('[CentralGatewayMCPService] Debug: Raw request body:', JSON.stringify(clientRequestBody));
-        throw { statusCode: 400, code: 'INVALID_REQUEST', message: 'Request body must contain a valid string "tool_name" or a valid string "method".' };
+        throw { statusCode: 400, mcpErrorCode: McpErrorCode.INVALID_REQUEST, message: 'Request body must contain a valid string "tool_name" or a valid string "method".' };
       }
       
-      const mcpDownstreamRequestId = (typeof jsonRpcRequestId === 'string' || typeof jsonRpcRequestId === 'number') 
+      const mcpDownstreamRequestId = (jsonRpcRequestId !== null && (typeof jsonRpcRequestId === 'string' || typeof jsonRpcRequestId === 'number')) 
         ? String(jsonRpcRequestId) 
-        : clientRequestBody?.request_id || uuidv4(); // Use client's request_id if available, else generate
+        : clientRequestBody?.request_id || uuidv4();
 
       const downstreamRequestPayload: McpRequestPayload = {
         mcp_version: clientRequestBody.mcp_version || '1.0',
@@ -130,16 +143,13 @@ export class CentralGatewayMCPService {
 
       const server = await this.managedServerService.getServerById(serverIdFromPath);
       if (!server) {
-        throw { statusCode: 404, code: 'SERVER_NOT_FOUND', message: `Managed server with ID '${serverIdFromPath}' not found.` };
+        throw { statusCode: 404, mcpErrorCode: McpErrorCode.RESOURCE_NOT_FOUND, message: `Managed server with ID '${serverIdFromPath}' not found.` };
       }
 
       // 4. Proxy the request to the downstream server
-      // If this is an SSE initialization, the response will be sent via SSE callback by the controller.
-      // Otherwise, it's a regular request/response.
       const downstreamMcpResponse: McpResponsePayload = await this.managedServerService.proxyMcpRequest(
         server.id, 
         downstreamRequestPayload
-        // The third argument for a streaming callback was removed as it's not implemented in proxyMcpRequest
       );
 
       this.trafficMonitoringService.logRequest({
@@ -149,106 +159,104 @@ export class CentralGatewayMCPService {
         sourceIp,
         httpStatus: downstreamMcpResponse.error ? (downstreamMcpResponse.error.data?.httpStatus || 400) : 200,
         isSuccess: !downstreamMcpResponse.error,
+        errorMessage: downstreamMcpResponse.error ? downstreamMcpResponse.error.message : undefined,
         durationMs: Date.now() - startTime,
         apiKeyId,
-        requestSizeBytes: clientRequestBody ? JSON.stringify(clientRequestBody).length : 0,
-        responseSizeBytes: downstreamMcpResponse ? JSON.stringify(downstreamMcpResponse).length : 0,
-        errorMessage: downstreamMcpResponse.error?.message,
-        transportType: isSseInit ? 'sse_init' : 'http_post' // Add transport type for logging
-      }).catch(err => console.error("Failed to log traffic:", err));
+        mcpSessionId, // Log mcpSessionId
+        gatewayRequestId // Log gatewayRequestId
+      });
 
-      const finalJsonRpcResponse: JsonRpcResponse = downstreamMcpResponse.error ? {
+      // Construct the JSON-RPC response to be sent back to the McpGatewayController
+      const finalJsonRpcResponse: JsonRpcResponse = {
         jsonrpc: '2.0',
-        id: jsonRpcRequestId,
-        error: downstreamMcpResponse.error, 
-      } : {
-        jsonrpc: '2.0',
-        id: jsonRpcRequestId,
-        result: downstreamMcpResponse, 
+        id: jsonRpcRequestId, // Use the original request ID for the response
+        result: downstreamMcpResponse.error ? undefined : downstreamMcpResponse.result,
+        error: downstreamMcpResponse.error ? {
+            code: downstreamMcpResponse.error.code, // This should be McpErrorCode
+            message: downstreamMcpResponse.error.message,
+            data: downstreamMcpResponse.error.data
+        } : undefined
       };
-
-      // If it was an SSE initialization and a callback exists, the controller will send it.
-      // Otherwise, return it for a regular HTTP response.
-      // The controller now calls sendSseMessage itself after this promise resolves for sse init.
       return finalJsonRpcResponse;
 
     } catch (error: any) {
-      const durationMs = Date.now() - startTime;
-      const statusCode = error.statusCode || 500;
-      const errorCode = error.code || 'INTERNAL_GATEWAY_ERROR';
-      const errorMessage = error.message || 'An unexpected error occurred in the gateway.';
+      console.error(`[CentralGatewayMCPService] Error handling MCP request (gatewayRequestId: ${gatewayRequestId}):`, error);
+      const endTime = Date.now();
+      const durationMs = endTime - startTime;
 
-      let methodForErrorLog: string;
-      const crb = rawRequest.body;
-      if (loggedMcpMethod) {
-        methodForErrorLog = loggedMcpMethod;
-      } else if (crb?.tool_name && typeof crb.tool_name === 'string') {
-        methodForErrorLog = `tools/call (${crb.tool_name})`;
-      } else if (crb?.method && typeof crb.method === 'string') {
-        methodForErrorLog = crb.method;
-      } else {
-        methodForErrorLog = 'unknown_operation';
-      }
+      const jsonRpcRequestIdForError = (jsonRpcRequestId !== undefined && (typeof jsonRpcRequestId === 'string' || typeof jsonRpcRequestId === 'number' || jsonRpcRequestId === null)) 
+            ? jsonRpcRequestId 
+            : null;
+
+      const responseError: JsonRpcErrorObject = {
+        code: error.mcpErrorCode || McpErrorCode.INTERNAL_ERROR, // Use MCP error code from thrown error or default
+        message: error.message || 'An internal error occurred in the gateway.',
+        data: { 
+            gateway_request_id: gatewayRequestId,
+            original_error_code_val: error.code, // Preserve original code if any (like 'UNAUTHORIZED')
+            httpStatus: error.statusCode || 500 
+        }
+      };
 
       this.trafficMonitoringService.logRequest({
         serverId: serverIdFromPath || GATEWAY_ERROR_SERVER_ID_PLACEHOLDER,
-        mcpMethod: methodForErrorLog,
-        mcpRequestId: clientRequestBody?.request_id || clientRequestBody?.id || gatewayRequestId, 
+        mcpMethod: loggedMcpMethod || 'unknown_method_due_to_error',
+        mcpRequestId: String(jsonRpcRequestIdForError || clientRequestBody?.request_id || 'unknown_request_id_due_to_error'),
         sourceIp,
-        httpStatus: statusCode,
+        httpStatus: error.statusCode || 500,
         isSuccess: false,
+        errorMessage: responseError.message,
         durationMs,
         apiKeyId,
-        requestSizeBytes: clientRequestBody ? JSON.stringify(clientRequestBody).length : 0,
-        errorMessage,
-        transportType: isSseInit ? 'sse_init_error' : 'http_post_error'
-      }).catch(err => console.error("Failed to log error traffic:", err));
+        mcpSessionId, // Log mcpSessionId with the error
+        gatewayRequestId // Log gatewayRequestId with the error
+      });
 
-      const errorJsonRpcResponse: JsonRpcResponse = {
+      return {
         jsonrpc: '2.0',
-        id: jsonRpcRequestId || null, 
-        error: {
-          code: statusCode === 401 ? -32001 : statusCode === 404 ? -32002 : statusCode === 400 ? -32602 : -32000,
-          message: errorMessage,
-          data: { gateway_error_code: errorCode },
-        },
+        id: jsonRpcRequestIdForError,
+        error: responseError,
       };
-
-      // If it was an SSE initialization error and a callback exists, the controller will send it.
-      // Otherwise, return it for a regular HTTP response.
-      return errorJsonRpcResponse;
     }
   }
 
-  // This method would be called by McpConnectionWrapper when it receives a message
-  // from a downstream server that needs to be pushed to a client via SSE.
-  public forwardMessageToSseClient(serverId: string, sessionId: string | null, mcpMessage: McpResponsePayload | McpRequestPayload ): void {
-    if (this.sseSendCallback) {
+  // This method is the callback for McpConnectionWrapper, invoked via ManagedServerService
+  private handleServerInitiatedMessage(targetServerId: string, mcpMessage: McpResponsePayload | McpRequestPayload): void {
+    if (this.sseSendDelegate) {
       let messageToSend: any = mcpMessage; 
+      // Adapt McpResponsePayload or McpRequestPayload to JsonRpcResponse or JsonRpcNotification structure
       if ('result' in mcpMessage || 'error' in mcpMessage) { // It's an McpResponsePayload
         messageToSend = {
           jsonrpc: '2.0',
-          id: (mcpMessage as McpResponsePayload).request_id, // Use original request_id for responses
+          id: (mcpMessage as McpResponsePayload).request_id, 
           result: (mcpMessage as McpResponsePayload).result,
           error: (mcpMessage as McpResponsePayload).error,
-        } as JsonRpcResponse;
+        } as JsonRpcResponse; 
       } else if ('method' in mcpMessage) { // It's an McpRequestPayload (e.g. server sending a notification as a request)
         messageToSend = {
             jsonrpc: '2.0',
             method: mcpMessage.method,
             params: mcpMessage.params,
-            id: mcpMessage.request_id || null, // Notifications might have an ID or not
-        };
+            id: mcpMessage.request_id || null, 
+        }; 
       }
 
-      const sent = this.sseSendCallback(serverId, sessionId, messageToSend);
-      if (sent) {
-        console.log(`[CentralGatewayMCPService] Forwarded message to SSE client for server ${serverId}`);
+      // Broadcast to all sessions for this serverId by passing undefined for targetMcpSessionId.
+      const streamsWrittenTo = this.sseSendDelegate(targetServerId, messageToSend, undefined);
+      if (streamsWrittenTo > 0) {
+        console.log(`[CentralGatewayMCPService] Server-initiated message for server ${targetServerId} forwarded to ${streamsWrittenTo} client session(s).`);
       } else {
-        console.warn(`[CentralGatewayMCPService] Failed to forward message to SSE client for server ${serverId}. SSE callback returned false.`);
+        console.warn(`[CentralGatewayMCPService] Server-initiated message for server ${targetServerId} was not forwarded (no active background streams?).`);
       }
     } else {
-      console.warn(`[CentralGatewayMCPService] SSE send callback not registered. Cannot forward message to client for server ${serverId}.`);
+      console.warn(`[CentralGatewayMCPService] SSE send delegate not registered. Cannot forward server-initiated message for server ${targetServerId}.`);
     }
   }
+}
+
+interface JsonRpcResponse { 
+    jsonrpc: '2.0';
+    id: string | number | null;
+    result?: any;
+    error?: { code: number; message: string; data?: any };
 }

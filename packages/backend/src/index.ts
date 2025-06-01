@@ -58,32 +58,23 @@ async function main() {
   const apiKeyService = new ApiKeyService();
   const trafficMonitoringService = new TrafficMonitoringService();
   
-  // CentralGatewayMCPService needs a way to forward messages. This will be passed to ManagedServerService,
-  // which in turn passes it to McpConnectionWrapper instances.
-  // McpGatewayController will provide the actual implementation for this callback.
-  let forwardMessageCallbackForManagedService: any = null; 
+  // 1. Instantiate ManagedServerService (no callback in constructor anymore)
+  const managedServerService = new ManagedServerService(process.env.NODE_ENV === 'development');
 
+  // 2. Instantiate CentralGatewayMCPService
+  // Its constructor will call managedServerService.setServerInitiatedMessageCallback()
   const centralGatewayService = new CentralGatewayMCPService(
-    null as any, // managedServerService will be set later
+    managedServerService, 
     apiKeyService,
     trafficMonitoringService
   );
 
-  // McpGatewayController needs centralGatewayService and will set the SSE callback on it.
+  // 3. Instantiate McpGatewayController
   const mcpGatewayController = new McpGatewayController(centralGatewayService);
 
-  // Now that mcpGatewayController is instantiated, it can provide the callback
-  // that CentralGatewayMCPService uses to send messages via SSE.
-  // And CentralGatewayMCPService provides the callback for McpConnectionWrapper.
-  forwardMessageCallbackForManagedService = centralGatewayService.forwardMessageToSseClient.bind(centralGatewayService);
-  
-  // Instantiate ManagedServerService with the callback
-  const managedServerService = new ManagedServerService(false, forwardMessageCallbackForManagedService);
-  
-  // Now, set the managedServerService dependency in centralGatewayService
-  // This is a bit of a workaround for the circular dependency in terms of callback setup.
-  // A more robust solution might involve an event emitter or a dedicated messaging bus.
-  (centralGatewayService as any).managedServerService = managedServerService; 
+  // 4. Set the SSE Send Delegate on CentralGatewayMCPService
+  // This allows CentralGatewayMCPService to call McpGatewayController to send SSE messages.
+  centralGatewayService.setSseSendDelegate(mcpGatewayController.forwardMessageToClientSession.bind(mcpGatewayController));
 
   const marketplaceService = new MarketplaceService(managedServerService);
 
@@ -100,7 +91,6 @@ async function main() {
   // API Routes
   app.use('/api/management', managementApiRoutes);
   app.use('/mcp', mcpApiRoutes);
-
   app.listen(port, '0.0.0.0', () => {
     console.log(`Backend server is listening on port ${port}`);
   });

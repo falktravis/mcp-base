@@ -31,6 +31,8 @@ export interface TrafficLog {
   // MCP specific fields
   mcpMethod: string;
   mcpRequestId?: string;
+  mcpSessionId?: string; // Added for session tracking
+  gatewayRequestId?: string; // Added for gateway's internal request tracking
   // HTTP specific fields for the gateway interaction
   sourceIp?: string;
   requestSizeBytes?: number;

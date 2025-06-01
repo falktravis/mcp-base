@@ -160,10 +160,40 @@ export interface McpRequestPayload {
   // authorization?: { scheme: string; token: string };
 }
 
+export enum McpErrorCode {
+  // General MCP Errors (Inspired by JSON-RPC 2.0)
+  PARSE_ERROR = -32700,
+  INVALID_REQUEST = -32600, // JSON is not a valid Request object
+  METHOD_NOT_FOUND = -32601,
+  INVALID_PARAMS = -32602,
+  INTERNAL_ERROR = -32603,
+
+  // MCP Specific Errors
+  SERVER_UNAVAILABLE = -32000, // Downstream MCP server is not available
+  SERVER_ERROR = -32001,       // Error reported by the downstream MCP server
+  SERVER_TIMEOUT = -32002,      // Timeout waiting for response from downstream MCP server
+  SERVER_CONNECTION_ERROR = -32003, // General error connecting to downstream MCP server
+  SERVER_SEND_ERROR = -32004, // Error sending request to downstream MCP server
+  REQUEST_TIMEOUT = -32005, // Timeout waiting for response from client or specific operation
+  RESOURCE_NOT_FOUND = -32006, // Generic resource not found (e.g. serverId)
+
+  // Gateway Specific Errors
+  UNAUTHENTICATED = -32009, // Used when API key is missing or invalid (distinct from AUTHENTICATION_FAILED which might imply an attempt was made with bad creds)
+  AUTHENTICATION_FAILED = -32010,
+  SESSION_NOT_FOUND = -32011,
+  INVALID_SESSION_ID = -32012,
+  STREAM_ERROR = -32013, // Error related to SSE stream
+  MAX_SESSIONS_REACHED = -32014,
+
+  // Tool/Plugin Specific Errors (Example range)
+  TOOL_SPECIFIC_ERROR_START = -32100,
+  TOOL_SPECIFIC_ERROR_END = -32200,
+}
+
 export interface McpError {
-  code: number; // MCP error code
+  code: McpErrorCode; // Use the enum for specific codes
   message: string;
-  data?: any;
+  data?: any; // Optional additional data
 }
 
 export interface McpResponsePayload {

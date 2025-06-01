@@ -10,11 +10,9 @@
     "composite": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true,
-    "baseUrl": ".",
-    "paths": {
+    "sourceMap": true,    "baseUrl": ".",    "paths": {
       "@/*": ["./src/*"],
-      "@shared-types/*": ["../shared-types/src/*"]
+      "shared-types/*": ["../shared-types/src/*", "./node_modules/shared-types/*"]
     },
     "types": ["node", "express"],
     "emitDecoratorMetadata": true,
