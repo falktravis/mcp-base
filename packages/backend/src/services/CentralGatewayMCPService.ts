@@ -1,262 +1,539 @@
-// This service will act as the MCP Server that mcp-remote clients connect to.
-// It will receive MCP requests, authenticate them (e.g., API Key),
-// and then use ManagedServerService to route the request to the appropriate downstream MCP server.
-
-import { McpRequestPayload, McpResponsePayload, McpError as McpErrorInterface, ServerType, McpErrorCode } from 'shared-types/api-contracts'; // Corrected import path
+import { EventEmitter } from 'events';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StreamableHTTPServerTransport, StreamableHTTPServerTransportOptions } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { 
+    Tool, 
+    CallToolRequest, 
+    CallToolResult, 
+    Request as McpSdkRequest,
+} from '@modelcontextprotocol/sdk/types.js';
 import { ManagedServerService } from './ManagedServerService';
 import { ApiKeyService } from './ApiKeyService';
 import { TrafficMonitoringService } from './TrafficMonitoringService';
 import { v4 as uuidv4 } from 'uuid';
-import { ApiKey } from 'shared-types/db-models'; // Import ApiKey DB model for validateApiKey return type
-import { SseSendDelegate } from '../controllers/McpGatewayController'; // Import the delegate type
+import { McpErrorCode, McpRequestPayload, McpResponsePayload } from 'shared-types/api-contracts';
+import { TrafficLog } from 'shared-types/db-models';
 
-const GATEWAY_ERROR_SERVER_ID_PLACEHOLDER = 'GATEWAY_ERROR_NO_SERVER_IDENTIFIED';
-
-// Define a simple interface for JSON-RPC responses for clarity
-interface JsonRpcErrorObject {
-  code: number;
-  message: string;
-  data?: any;
+// Session and tool interfaces
+interface SessionApiKey {
+  id: string;
+  name: string;
+  expiresAt?: string | null;
+  lastUsedAt?: string | null;
+  revokedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
-interface JsonRpcResponse {
-  jsonrpc: '2.0';
-  id: string | number | null;
-  result?: any;
-  error?: JsonRpcErrorObject;
+interface McpSession {
+  sessionId: string;
+  apiKey: SessionApiKey;
+  scopes: string[];
+  createdAt: Date;
+  lastActivity: Date;
+  clientInfo: Record<string, any>;
+  capabilities: Record<string, any>;
+  allowedServers?: string[];
 }
 
-// Define the shape of the raw request object more precisely
-interface GatewayRawRequest {
-    params?: { serverId?: string };
-    body?: any; 
-    headers?: Record<string, string | string[] | undefined>;
-    ip?: string;
+interface AggregatedToolMapping {
+  originalToolName: string;
+  serverId: string;
+  serverName: string;
+  originalToolDefinition: Tool;
 }
 
-// Type for the SSE callback function
-// type SseSendCallback = (mcpSessionId: string, message: any, serverId: string) => boolean; // Old type
-
-export class CentralGatewayMCPService {
+/**
+ * Central MCP Gateway Service - single, clean implementation
+ */
+export class CentralGatewayMCPService extends EventEmitter {
+  public readonly instanceId: string;
+  private mcpServer: Server | null = null;
+  private transport: StreamableHTTPServerTransport | null = null;
   private managedServerService: ManagedServerService;
   private apiKeyService: ApiKeyService;
   private trafficMonitoringService: TrafficMonitoringService;
-  // private sseSendCallback?: SseSendCallback; // Old property
-  private sseSendDelegate?: SseSendDelegate; // New property using the imported type
+
+  // Aggregated tool and session state
+  private aggregatedTools: Map<string, AggregatedToolMapping> = new Map();
+  private activeSessions: Map<string, McpSession> = new Map();
+  private isGatewayInitialized = false;
+  private sessionCleanupInterval: NodeJS.Timeout | null = null;
+  private readonly SESSION_TIMEOUT_MS = 1000 * 60 * 60; // 1 hour
+  private readonly CLEANUP_INTERVAL_MS = 1000 * 60 * 10; // 10 min
 
   constructor(
     managedServerService: ManagedServerService,
     apiKeyService: ApiKeyService,
-    trafficMonitoringService: TrafficMonitoringService,
-    // sseSendDelegate will be injected after McpGatewayController is instantiated
+    trafficMonitoringService: TrafficMonitoringService
   ) {
+    super();
     this.managedServerService = managedServerService;
     this.apiKeyService = apiKeyService;
     this.trafficMonitoringService = trafficMonitoringService;
-    console.log('CentralGatewayMCPService initialized with core dependencies');
-
-    // Register the callback with ManagedServerService for server-initiated messages
-    this.managedServerService.setServerInitiatedMessageCallback(
-      this.handleServerInitiatedMessage.bind(this)
-    );
+    this.instanceId = uuidv4();
+    console.log(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] Created.`);
   }
 
-  public setSseSendDelegate(delegate: SseSendDelegate): void {
-    this.sseSendDelegate = delegate;
-    console.log('[CentralGatewayMCPService] SSE send delegate registered.');
-  }
-
-  // Method to handle incoming MCP requests (generic for tool_call, resource_request, etc.)
-  async handleMcpRequest(
-    rawRequest: GatewayRawRequest, // Use the more specific type
-    sourceIp?: string,
-    mcpSessionId?: string, // Added mcpSessionId
-  ): Promise<JsonRpcResponse> { 
-    const gatewayRequestId = uuidv4(); 
-    let apiKeyId: string | undefined;
-    let serverIdFromPath: string | undefined;
-
-    const startTime = Date.now();
-    let loggedMcpMethod: string | undefined;
-
-    const clientRequestBody = rawRequest.body;
-    const jsonRpcRequestId = (clientRequestBody?.id !== undefined) ? clientRequestBody.id : null;
-
+  public async initialize(): Promise<void> {
+    console.log(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] Attempting to initialize...`);
     try {
-      // 1. Extract API Key and Authenticate
-      const authHeader = rawRequest.headers?.['authorization'];
-      const apiKeyFromAuth = typeof authHeader === 'string' ? authHeader.split(' ')?.[1] : undefined;
-      const apiKeyHeader = rawRequest.headers?.['x-api-key'] || apiKeyFromAuth;
-      let validatedApiKeyModel: Omit<ApiKey, "hashedApiKey" | "salt"> | null = null;
-      if (apiKeyHeader) {
-        validatedApiKeyModel = await this.apiKeyService.validateApiKey(String(apiKeyHeader)); // Ensure string
-        if (!validatedApiKeyModel) {
-          throw { statusCode: 401, mcpErrorCode: McpErrorCode.UNAUTHENTICATED, message: 'Invalid API key.' };
+      this.mcpServer = new Server({
+        name: 'MCP Pro Central Gateway',
+        version: '1.0.0',
+        capabilities: {
+          tools: { 
+            listChanged: true 
+          }, 
+          logging: {},
+        },
+        initialize: async (request: McpSdkRequest, context?: any): Promise<any> => {
+          const sessionId = context?.sessionId || uuidv4(); 
+          const requestId = context?.requestId || (request as any).id || uuidv4();
+
+          console.log(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] SDK SERVER HOOK: 'initialize' called. SID: ${sessionId}, ReqID: ${requestId}, Params: ${JSON.stringify(request.params)}, Context: ${JSON.stringify(context)}`);
+
+          try {
+            const params = request.params as { clientInfo?: { apiKey?: string }, apiKey?: string, [key: string]: any };
+            const clientInfo = params?.clientInfo;
+            const apiKeyValue = clientInfo?.apiKey || params?.apiKey;
+
+            let apiKey: SessionApiKey | null = null;
+            console.log(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] Initialize: MCP_GATEWAY_AUTH_BYPASS = ${process.env.MCP_GATEWAY_AUTH_BYPASS}`);
+
+            if (process.env.MCP_GATEWAY_AUTH_BYPASS !== 'true') {
+              if (!apiKeyValue) {
+                console.warn(`[CentralGatewayMCPService] Initialize: API key missing. RequestId: ${requestId}, SessionId: ${sessionId}`);
+                throw {
+                  code: McpErrorCode.UNAUTHENTICATED,
+                  message: "API key is required for gateway access.",
+                  data: { requestId }
+                };
+              }
+
+              const validatedApiKey = await this.apiKeyService.validateApiKey(apiKeyValue);
+              if (!validatedApiKey) {
+                console.warn(`[CentralGatewayMCPService] Initialize: Invalid API key. Key prefix: ${apiKeyValue.substring(0, 5)}... RequestId: ${requestId}, SessionId: ${sessionId}`);
+                throw {
+                  code: McpErrorCode.AUTHENTICATION_FAILED,
+                  message: "Invalid or expired API key.",
+                  data: { requestId }
+                };
+              }
+              
+              // Ensure scopes is always string[]
+              let scopes: string[];
+              if (typeof validatedApiKey.scopes === 'string') {
+                scopes = [validatedApiKey.scopes];
+              } else if (Array.isArray(validatedApiKey.scopes)) {
+                scopes = validatedApiKey.scopes;
+              } else {
+                scopes = ['mcp:connect']; // Default if validatedApiKey.scopes is undefined or invalid type
+              }
+
+              const requiredScopes = ['mcp:connect'];
+              const hasRequiredScopes = requiredScopes.every(scope => scopes.includes(scope));
+              
+              if (!hasRequiredScopes) {
+                console.warn(`[CentralGatewayMCPService] Initialize: Insufficient scopes for key ${validatedApiKey.id}. RequestId: ${requestId}, SessionId: ${sessionId}`);
+                throw {
+                  code: McpErrorCode.AUTHENTICATION_FAILED, // Using AUTHENTICATION_FAILED for scope issues for now
+                  message: "Insufficient permissions. Required scopes: " + requiredScopes.join(', '),
+                  data: { requestId, requiredScopes, userScopes: scopes }
+                };
+              }
+
+              apiKey = {
+                id: validatedApiKey.id,
+                name: validatedApiKey.name,
+                expiresAt: validatedApiKey.expiresAt ? validatedApiKey.expiresAt.toISOString() : null,
+                lastUsedAt: validatedApiKey.lastUsedAt ? validatedApiKey.lastUsedAt.toISOString() : null,
+                revokedAt: validatedApiKey.revokedAt ? validatedApiKey.revokedAt.toISOString() : null,
+                createdAt: validatedApiKey.createdAt.toISOString(),
+                updatedAt: validatedApiKey.updatedAt.toISOString()
+              };
+            } else {
+              console.log(`[CentralGatewayMCPService] Initialize: MCP_GATEWAY_AUTH_BYPASS is true. Bypassing API key validation for session ${sessionId}.`);
+              apiKey = {
+                id: 'dev-session-auth-bypassed',
+                name: 'Auth Bypassed Development Key',
+                expiresAt: null,
+                lastUsedAt: null,
+                revokedAt: null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              };
+            }
+
+            let sessionScopes: string[];
+            if (process.env.MCP_GATEWAY_AUTH_BYPASS === 'true') {
+                sessionScopes = ['mcp:connect', 'tools:call', 'tools:list', 'admin:all']; // Grant all scopes if auth is bypassed
+            } else {
+                // Ensure apiKey is not null when auth is not bypassed
+                if (!apiKey) { // This should ideally not be reached if logic is correct, but as a safeguard
+                    console.error("[CentralGatewayMCPService] Initialize: apiKey is null after validation attempted. This indicates a logic flaw.");
+                    throw {
+                        code: McpErrorCode.INTERNAL_ERROR,
+                        message: "Internal server error during API key processing.",
+                        data: { requestId }
+                    };
+                }
+                const validatedApiKeyScopes = (apiKey as any).scopes; // Assuming validatedApiKey would have populated apiKey here
+                if (typeof validatedApiKeyScopes === 'string') {
+                  sessionScopes = [validatedApiKeyScopes];
+                } else if (Array.isArray(validatedApiKeyScopes)) {
+                  sessionScopes = validatedApiKeyScopes;
+                } else {
+                  sessionScopes = ['mcp:connect']; 
+                }
+            }
+
+            const session: McpSession = {
+              sessionId: sessionId,
+              apiKey: apiKey,
+              scopes: sessionScopes,
+              createdAt: new Date(),
+              lastActivity: new Date(),
+              clientInfo: clientInfo || {},
+              capabilities: {}, 
+              allowedServers: undefined
+            };
+            
+            this.activeSessions.set(session.sessionId, session);
+            console.log(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] SDK SERVER HOOK: 'initialize' SUCCESS. Session ${session.sessionId} created/validated for API key ${apiKey?.name} (ID: ${apiKey?.id}). Returning session info.`);
+
+            const gatewayCapabilitiesResponse = { 
+              tools: { list: true, call: true, listChanged: true }, 
+              logging: { log: true }
+            };
+            session.capabilities = gatewayCapabilitiesResponse;
+
+            return {
+              serverInfo: {
+                name: "MCP Pro Central Gateway",
+                version: "1.0.0",
+                description: "MCP Pro Central Gateway - Unified interface for multiple MCP servers"
+              },
+              sessionId: session.sessionId,
+              capabilities: gatewayCapabilitiesResponse, 
+              instructions: "MCP Pro Central Gateway. Use serverName__toolName format for tools.",
+              metadata: {
+                gatewayVersion: "1.0.0",
+                activeManagedServers: await this.managedServerService.getActiveServerCount?.() ?? 0,
+                initialAggregatedTools: this.aggregatedTools.size 
+              }
+            };
+
+          } catch (error: any) {
+            console.error(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] SDK SERVER HOOK: 'initialize' FAILED. SID: ${sessionId}, ReqID: ${requestId}. Error Code: ${error.code}, Msg: ${error.message}`, error);
+            if (error.code && error.message) {
+              throw error; 
+            }
+            throw {
+              code: McpErrorCode.INTERNAL_ERROR,
+              message: "Gateway internal error during session initialization: " + (error.message || 'Unknown internal error during initialize.'),
+              data: { requestId }
+            };
+          }
+        },
+        tools: async () => {
+          console.log(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] SDK SERVER HOOK: 'tools' called.`);
+          return Array.from(this.aggregatedTools.values()).map(t => ({
+            ...t.originalToolDefinition,
+            name: this.getGatewayToolName(t.serverName, t.originalToolName),
+            annotations: {
+              ...t.originalToolDefinition.annotations,
+              originServerId: t.serverId,
+              originServerName: t.serverName,
+              gatewayAggregated: true,
+            },
+          }));
+        },
+        callTool: async (sdkRequest: CallToolRequest, context?: any): Promise<CallToolResult> => {
+          const params = sdkRequest.params;
+          const toolName = params.name;
+          const sessionId = context?.sessionId;
+          const requestId = context?.requestId || (sdkRequest as any).id || uuidv4();
+          console.log(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] SDK SERVER HOOK: 'callTool' called. Tool: ${toolName}, SID: ${sessionId}, ReqID: ${requestId}, Context: ${JSON.stringify(context)}`);
+
+          if (!sessionId) {
+             console.error(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] SDK SERVER HOOK: 'callTool' - SessionId missing from context. Tool: ${toolName}, ReqID: ${requestId}.`);
+             return { content: [], error: { code: McpErrorCode.AUTHENTICATION_FAILED, message: "Session ID is missing."}};
+          }
+          const session = this.validateSession(sessionId);
+          if (!session) {
+            console.warn(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] SDK SERVER HOOK: 'callTool' - Session ${sessionId} not found/expired. Tool: ${toolName}, ReqID: ${requestId}.`);
+            return { 
+                content: [], 
+                error: { code: McpErrorCode.AUTHENTICATION_FAILED, message: "Session not found or expired for tools/call" } 
+            };
+          }
+          
+          console.log(`[CentralGatewayMCPService] Server constructor 'callTool' for tool: ${toolName}. Session: ${sessionId}, Request: ${requestId}.`);
+
+          const mapping = this.getAggregatedToolMappingByGatewayName(toolName);
+          if (!mapping) {
+            console.warn(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] SDK SERVER HOOK: 'callTool' - Tool ${toolName} not found. SID: ${sessionId}, ReqID: ${requestId}.`);
+            return { 
+              content: [], 
+              error: { code: McpErrorCode.METHOD_NOT_FOUND, message: `Tool ${toolName} not found via gateway.` } 
+            };
+          }
+          
+          session.lastActivity = new Date();
+
+          return this.callDownstreamTool(mapping.serverId, mapping.originalToolName, params.arguments || {}, session, requestId);
+        },
+      });
+
+      this.setupMcpServerHandlers();
+      
+      const transportOptions: StreamableHTTPServerTransportOptions = {
+        sessionIdGenerator: () => uuidv4(),
+      };
+      this.transport = new StreamableHTTPServerTransport(transportOptions);
+      await this.mcpServer.connect(this.transport);
+      
+      await this.refreshAggregatedTools(); 
+
+      this.startSessionCleanup();
+      this.setupDownstreamServerEventHandlers();
+
+      this.isGatewayInitialized = true;
+      console.log(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] Gateway initialized and ready. isGatewayInitialized = true`);
+
+    } catch (err: any) { 
+      console.error(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] Main initialize() method failed:`, err);
+      this.isGatewayInitialized = false;
+      console.log(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] Set isGatewayInitialized = false due to initialization error.`);
+      this.emit('gatewayError', err); 
+      throw err;
+    }
+  }
+
+  public getTransport(): StreamableHTTPServerTransport | null {
+    return this.transport;
+  }
+
+  private async refreshAggregatedTools(): Promise<void> {
+    this.aggregatedTools.clear();
+    const servers = await this.managedServerService.getAllManagedServers?.() || [];
+    let newToolsCount = 0;
+    for (const server of servers) {
+      if (server.isEnabled && server.id) { 
+        try {
+          const tools = await this.managedServerService.listTools(server.id);
+          for (const tool of tools) {
+            const gatewayToolName = this.getGatewayToolName(server.name || server.id, tool.name);
+            this.aggregatedTools.set(gatewayToolName, {
+              originalToolName: tool.name,
+              serverId: server.id,
+              serverName: server.name || server.id,
+              originalToolDefinition: tool,
+            });
+            newToolsCount++;
+          }
+        } catch (err: any) {
+          console.error(`[CentralGatewayMCPService] Failed to aggregate tools from server ${server.name || server.id} (ID: ${server.id}):`, err.message);
         }
-        apiKeyId = validatedApiKeyModel.id;
-      } else {
-        apiKeyId = undefined; 
       }
+    }
+    console.log(`[CentralGatewayMCPService] Aggregated tools refreshed: ${newToolsCount} tools from ${servers.length} configured servers.`);
+  }
 
-      // 2. Extract serverId from path and request details from body
-      serverIdFromPath = rawRequest.params?.serverId;
-      if (!serverIdFromPath) {
-        throw { statusCode: 400, mcpErrorCode: McpErrorCode.INVALID_PARAMS, message: 'Server ID must be provided in the URL path.' };
-      }
+  private getGatewayToolName(serverNameOrId: string, toolName: string): string {
+    const prefix = serverNameOrId.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
+    return `${prefix}__${toolName}`;
+  }
 
-      if (mcpSessionId) {
-        console.log(`[CentralGatewayMCPService] Processing request for serverId: ${serverIdFromPath}, mcpSessionId: ${mcpSessionId}, gatewayRequestId: ${gatewayRequestId}`);
-      } else {
-        console.log(`[CentralGatewayMCPService] Processing request for serverId: ${serverIdFromPath} (no mcpSessionId), gatewayRequestId: ${gatewayRequestId}`);
-      }
+  private getAggregatedToolMappingByGatewayName(gatewayToolName: string): AggregatedToolMapping | undefined {
+    return this.aggregatedTools.get(gatewayToolName);
+  }
 
-      const toolName = clientRequestBody?.tool_name;
-      const toolInput = clientRequestBody?.tool_input;
-      const clientMethod = clientRequestBody?.method; 
+  private setupMcpServerHandlers(): void {
+    if (!this.mcpServer) return;
 
-      let actualDownstreamMethod: string;
-      let actualDownstreamParams: any;
+    console.log("[CentralGatewayMCPService] setupMcpServerHandlers: Core handlers (initialize, tools/list, tools/call) are managed by Server constructor. Additional handlers can be set here.");
+  }
 
-      if (typeof toolName === 'string' && toolName) {
-        actualDownstreamMethod = 'tools/call';
-        actualDownstreamParams = { name: toolName, arguments: toolInput };
-        loggedMcpMethod = `tools/call (${toolName})`;
-      } else if (typeof clientMethod === 'string' && clientMethod) {
-        actualDownstreamMethod = clientMethod;
-        actualDownstreamParams = clientRequestBody.params;
-        loggedMcpMethod = actualDownstreamMethod;
-      } else {
-        console.error('[CentralGatewayMCPService] Debug: Raw request body:', JSON.stringify(clientRequestBody));
-        throw { statusCode: 400, mcpErrorCode: McpErrorCode.INVALID_REQUEST, message: 'Request body must contain a valid string "tool_name" or a valid string "method".' };
+  private validateSession(sessionId?: string): McpSession | null {
+    if (!sessionId) {
+      console.warn("[CentralGatewayMCPService] validateSession: Called with no sessionId.");
+      return null;
+    }
+    
+    const session = this.activeSessions.get(sessionId);
+    if (!session) {
+      console.warn(`[CentralGatewayMCPService] validateSession: Session ${sessionId} not found in active sessions.`);
+      return null;
+    }
+    
+    const now = new Date();
+    if (now.getTime() - session.lastActivity.getTime() > this.SESSION_TIMEOUT_MS) {
+      this.activeSessions.delete(sessionId);
+      console.log(`[CentralGatewayMCPService] validateSession: Session ${sessionId} expired and removed.`);
+      return null;
+    }
+    return session;
+  }
+
+  private async callDownstreamTool(
+    serverId: string, 
+    toolName: string, 
+    args: any, 
+    session: McpSession,
+    clientRequestId?: string
+  ): Promise<CallToolResult> {
+    const startTime = Date.now();
+    const downstreamRequestId = uuidv4();
+    let responsePayload: McpResponsePayload | null = null;
+    
+    try {
+      console.log(`[CentralGatewayMCPService] Calling tool ${toolName} on server ${serverId} for session ${session.sessionId}. Downstream Req ID: ${downstreamRequestId}, Client Req ID: ${clientRequestId || 'N/A'}`);
+      
+      const requestPayloadForDownstream: McpRequestPayload = {
+        mcp_version: "1.0",
+        request_id: downstreamRequestId,
+        method: 'tools/call',
+        params: {
+          name: toolName,
+          arguments: args
+        }
+      };
+
+      responsePayload = await this.managedServerService.forwardRequestToServer(serverId, requestPayloadForDownstream);
+      const duration = Date.now() - startTime;
+      
+      const logData: Omit<TrafficLog, "id" | "timestamp"> = { 
+        serverId,
+        mcpMethod: 'tools/call', 
+        mcpRequestId: downstreamRequestId,
+        mcpSessionId: session.sessionId,
+        sourceIp: 'gateway-session',
+        durationMs: duration, 
+        isSuccess: !responsePayload.error, 
+        httpStatus: responsePayload.error ? ( (responsePayload.error.code === McpErrorCode.METHOD_NOT_FOUND) ? 404 : 500) : 200,
+        errorMessage: responsePayload.error?.message || undefined, 
+        apiKeyId: session.apiKey.id,
+      };
+      this.trafficMonitoringService.logRequest(logData).catch(err => console.error("[CentralGatewayMCPService] Error logging request to TrafficMonitoringService:", err));
+      
+      if (responsePayload.error) {
+        console.warn(`[CentralGatewayMCPService] Downstream server error for tool ${toolName} on server ${serverId} (Req ID: ${downstreamRequestId}): ${responsePayload.error.message}`);
+        return { content: [], error: responsePayload.error }; 
       }
       
-      const mcpDownstreamRequestId = (jsonRpcRequestId !== null && (typeof jsonRpcRequestId === 'string' || typeof jsonRpcRequestId === 'number')) 
-        ? String(jsonRpcRequestId) 
-        : clientRequestBody?.request_id || uuidv4();
-
-      const downstreamRequestPayload: McpRequestPayload = {
-        mcp_version: clientRequestBody.mcp_version || '1.0',
-        request_id: mcpDownstreamRequestId, 
-        method: actualDownstreamMethod,
-        params: actualDownstreamParams,
-      };
-
-      const server = await this.managedServerService.getServerById(serverIdFromPath);
-      if (!server) {
-        throw { statusCode: 404, mcpErrorCode: McpErrorCode.RESOURCE_NOT_FOUND, message: `Managed server with ID '${serverIdFromPath}' not found.` };
+      const result = responsePayload.result;
+      if (result && typeof result === 'object' && 'content' in result && Array.isArray((result as any).content)) {
+         return result as CallToolResult;
+      } else {
+         console.warn(`[CentralGatewayMCPService] Unexpected result structure from downstream server ${serverId} for tool ${toolName} (Req ID: ${downstreamRequestId}). Wrapping into a text content part. Result:`, JSON.stringify(result));
+         return {
+            content: [{ type: "text", text: JSON.stringify(result ?? "No content") }]
+         };
       }
-
-      // 4. Proxy the request to the downstream server
-      const downstreamMcpResponse: McpResponsePayload = await this.managedServerService.proxyMcpRequest(
-        server.id, 
-        downstreamRequestPayload
-      );
-
-      this.trafficMonitoringService.logRequest({
-        serverId: server.id,
-        mcpMethod: loggedMcpMethod,
-        mcpRequestId: mcpDownstreamRequestId, 
-        sourceIp,
-        httpStatus: downstreamMcpResponse.error ? (downstreamMcpResponse.error.data?.httpStatus || 400) : 200,
-        isSuccess: !downstreamMcpResponse.error,
-        errorMessage: downstreamMcpResponse.error ? downstreamMcpResponse.error.message : undefined,
-        durationMs: Date.now() - startTime,
-        apiKeyId,
-        mcpSessionId, // Log mcpSessionId
-        gatewayRequestId // Log gatewayRequestId
-      });
-
-      // Construct the JSON-RPC response to be sent back to the McpGatewayController
-      const finalJsonRpcResponse: JsonRpcResponse = {
-        jsonrpc: '2.0',
-        id: jsonRpcRequestId, // Use the original request ID for the response
-        result: downstreamMcpResponse.error ? undefined : downstreamMcpResponse.result,
-        error: downstreamMcpResponse.error ? {
-            code: downstreamMcpResponse.error.code, // This should be McpErrorCode
-            message: downstreamMcpResponse.error.message,
-            data: downstreamMcpResponse.error.data
-        } : undefined
-      };
-      return finalJsonRpcResponse;
 
     } catch (error: any) {
-      console.error(`[CentralGatewayMCPService] Error handling MCP request (gatewayRequestId: ${gatewayRequestId}):`, error);
-      const endTime = Date.now();
-      const durationMs = endTime - startTime;
-
-      const jsonRpcRequestIdForError = (jsonRpcRequestId !== undefined && (typeof jsonRpcRequestId === 'string' || typeof jsonRpcRequestId === 'number' || jsonRpcRequestId === null)) 
-            ? jsonRpcRequestId 
-            : null;
-
-      const responseError: JsonRpcErrorObject = {
-        code: error.mcpErrorCode || McpErrorCode.INTERNAL_ERROR, // Use MCP error code from thrown error or default
-        message: error.message || 'An internal error occurred in the gateway.',
-        data: { 
-            gateway_request_id: gatewayRequestId,
-            original_error_code_val: error.code, // Preserve original code if any (like 'UNAUTHORIZED')
-            httpStatus: error.statusCode || 500 
-        }
-      };
-
-      this.trafficMonitoringService.logRequest({
-        serverId: serverIdFromPath || GATEWAY_ERROR_SERVER_ID_PLACEHOLDER,
-        mcpMethod: loggedMcpMethod || 'unknown_method_due_to_error',
-        mcpRequestId: String(jsonRpcRequestIdForError || clientRequestBody?.request_id || 'unknown_request_id_due_to_error'),
-        sourceIp,
-        httpStatus: error.statusCode || 500,
+      console.error(`[CentralGatewayMCPService] Gateway-level error calling downstream tool ${toolName} on server ${serverId} (Req ID: ${downstreamRequestId}):`, error.message, error.stack);
+      const duration = Date.now() - startTime;
+      
+      const errorLogData: Omit<TrafficLog, "id" | "timestamp"> = { 
+        serverId,
+        mcpMethod: 'tools/call',
+        mcpRequestId: downstreamRequestId,
+        mcpSessionId: session.sessionId,
+        sourceIp: 'gateway-session',
+        durationMs: duration,
         isSuccess: false,
-        errorMessage: responseError.message,
-        durationMs,
-        apiKeyId,
-        mcpSessionId, // Log mcpSessionId with the error
-        gatewayRequestId // Log gatewayRequestId with the error
-      });
+        httpStatus: 500,
+        errorMessage: `Gateway error: ${error.message}`,
+        apiKeyId: session.apiKey.id,
+      };
+      this.trafficMonitoringService.logRequest(errorLogData).catch(err => console.error("[CentralGatewayMCPService] Error logging failure request to TrafficMonitoringService:", err));
 
-      return {
-        jsonrpc: '2.0',
-        id: jsonRpcRequestIdForError,
-        error: responseError,
+      return { 
+        content: [], 
+        error: { 
+          code: McpErrorCode.SERVER_ERROR,
+          message: error.message || `Gateway failed to process call to downstream tool ${toolName} on server ${serverId}`
+        } 
       };
     }
   }
 
-  // This method is the callback for McpConnectionWrapper, invoked via ManagedServerService
-  private handleServerInitiatedMessage(targetServerId: string, mcpMessage: McpResponsePayload | McpRequestPayload): void {
-    if (this.sseSendDelegate) {
-      let messageToSend: any = mcpMessage; 
-      // Adapt McpResponsePayload or McpRequestPayload to JsonRpcResponse or JsonRpcNotification structure
-      if ('result' in mcpMessage || 'error' in mcpMessage) { // It's an McpResponsePayload
-        messageToSend = {
-          jsonrpc: '2.0',
-          id: (mcpMessage as McpResponsePayload).request_id, 
-          result: (mcpMessage as McpResponsePayload).result,
-          error: (mcpMessage as McpResponsePayload).error,
-        } as JsonRpcResponse; 
-      } else if ('method' in mcpMessage) { // It's an McpRequestPayload (e.g. server sending a notification as a request)
-        messageToSend = {
-            jsonrpc: '2.0',
-            method: mcpMessage.method,
-            params: mcpMessage.params,
-            id: mcpMessage.request_id || null, 
-        }; 
-      }
-
-      // Broadcast to all sessions for this serverId by passing undefined for targetMcpSessionId.
-      const streamsWrittenTo = this.sseSendDelegate(targetServerId, messageToSend, undefined);
-      if (streamsWrittenTo > 0) {
-        console.log(`[CentralGatewayMCPService] Server-initiated message for server ${targetServerId} forwarded to ${streamsWrittenTo} client session(s).`);
-      } else {
-        console.warn(`[CentralGatewayMCPService] Server-initiated message for server ${targetServerId} was not forwarded (no active background streams?).`);
-      }
-    } else {
-      console.warn(`[CentralGatewayMCPService] SSE send delegate not registered. Cannot forward server-initiated message for server ${targetServerId}.`);
+  private setupDownstreamServerEventHandlers(): void {
+    if (!this.managedServerService) {
+        console.warn("[CentralGatewayMCPService] ManagedServerService not available. Cannot setup downstream event handlers.");
+        return;
     }
-  }
-}
+    this.managedServerService.on('toolsChanged', async (serverId: string) => {
+      console.log(`[CentralGatewayMCPService] Event: Tools changed for server ${serverId}, refreshing aggregated tools.`);
+      await this.refreshAggregatedTools();
+    });
 
-interface JsonRpcResponse { 
-    jsonrpc: '2.0';
-    id: string | number | null;
-    result?: any;
-    error?: { code: number; message: string; data?: any };
+    this.managedServerService.on('serverStatusChanged', async (serverId: string, status: string) => {
+      console.log(`[CentralGatewayMCPService] Event: Server ${serverId} status changed to ${status}. Refreshing aggregated tools.`);
+      await this.refreshAggregatedTools();
+    });
+  }
+
+  private startSessionCleanup(): void {
+    if (this.sessionCleanupInterval) { 
+        clearInterval(this.sessionCleanupInterval);
+    }
+    this.sessionCleanupInterval = setInterval(() => {
+      const now = new Date();
+      let expiredCount = 0;
+      for (const [sessionId, session] of this.activeSessions.entries()) {
+        if (now.getTime() - session.lastActivity.getTime() > this.SESSION_TIMEOUT_MS) {
+          this.activeSessions.delete(sessionId);
+          console.log(`[CentralGatewayMCPService] Cleaned up expired session ${sessionId}`);
+          expiredCount++;
+        }
+      }
+      if (expiredCount > 0) {
+        console.log(`[CentralGatewayMCPService] Session cleanup: Removed ${expiredCount} expired sessions.`);
+      }
+    }, this.CLEANUP_INTERVAL_MS);
+    console.log(`[CentralGatewayMCPService] Session cleanup task started. Timeout: ${this.SESSION_TIMEOUT_MS / (60 * 1000)} min, Interval: ${this.CLEANUP_INTERVAL_MS / (60*1000)} min.`);
+  }
+
+  public getActiveSessionCount(): number {
+    return this.activeSessions.size;
+  }
+
+  public getAggregatedToolCount(): number {
+    return this.aggregatedTools.size;
+  }
+
+  public async cleanup(): Promise<void> {
+    console.log(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] Initiating cleanup...`);
+    
+    if (this.sessionCleanupInterval) {
+      clearInterval(this.sessionCleanupInterval);
+      this.sessionCleanupInterval = null;
+      console.log('[CentralGatewayMCPService] Stopped session cleanup interval.');
+    }
+
+    if (this.mcpServer) {
+      await this.mcpServer.close();
+      this.mcpServer = null;
+      console.log('[CentralGatewayMCPService] MCP Server closed.');
+    }
+
+    if (this.transport) {
+      this.transport.close();
+      this.transport = null;
+      console.log('[CentralGatewayMCPService] MCP Transport closed.');
+    }
+
+    this.activeSessions.clear();
+    this.aggregatedTools.clear();
+    this.isGatewayInitialized = false;
+    console.log(`[CentralGatewayMCPService INSTANCE ${this.instanceId}] Cleared active sessions, aggregated tools, and reset initialization state. isGatewayInitialized = false`);
+  }
+
+  public isReady(): boolean {
+    return this.isGatewayInitialized;
+  }
 }

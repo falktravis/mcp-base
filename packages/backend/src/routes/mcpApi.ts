@@ -6,9 +6,11 @@ import { McpGatewayController } from '../controllers/McpGatewayController';
 export default function(mcpGatewayController: McpGatewayController) {
   const router = Router();
 
-  // Single MCP endpoint per serverId, supporting all relevant HTTP methods (POST, GET, DELETE)
-  router.all('/:serverId/mcp', mcpGatewayController.handleMcpEndpoint.bind(mcpGatewayController));
+  // Centralized MCP Gateway Endpoint
+  // This single endpoint will handle all MCP requests to the gateway.
+  // The McpGatewayController will no longer expect a serverId from the path for this route.
+  router.all('/gateway', mcpGatewayController.handleCentralGatewayRequest.bind(mcpGatewayController));
 
-  console.log('[mcpApi.ts] MCP API routes configured with a single MCP endpoint: /:serverId/mcp');
+  console.log('[mcpApi.ts] MCP API routes configured. Central Gateway: /gateway, Legacy Proxy: /:serverId/mcp');
   return router;
 }

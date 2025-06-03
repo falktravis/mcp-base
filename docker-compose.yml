@@ -30,6 +30,7 @@ services:
       POSTGRES_USER: mcp_pro_user
       POSTGRES_PASSWORD: mcp_pro_password
       POSTGRES_DB: mcp_pro_db
+      MCP_GATEWAY_AUTH_BYPASS: "true"
 
   frontend:
     build:

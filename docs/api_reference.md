@@ -275,41 +275,73 @@ Endpoints for user account management (e.g., registration, login, profile). This
 
 ## MCP Gateway API
 
-Base URL: `/mcp`
+Base URL: `/mcp` (This base URL might be further namespaced, e.g., `/api/mcp`)
 
-This API acts as a proxy to the managed MCP servers. Requests to this endpoint are forwarded to the appropriate MCP server based on the `{serverId}`.
+### Centralized Gateway Endpoint
 
-#### `POST /mcp/{serverId}`
+**`POST /mcp/gateway`**
 
-Send an MCP request to a managed server.
+This is the primary endpoint for interacting with the MCP Pro Centralized Gateway. It behaves as a standard MCP server, providing access to an aggregated set of capabilities (primarily tools) from all configured and enabled downstream MCP servers.
 
-- **Path Parameters**:
-    - `serverId` (string, required): The ID of the target managed MCP server.
-- **Request Body**: Standard MCP Request Payload (JSON)
-    - Example:
-      ```json
-      {
-        "mcp_version": "1.0",
-        "request_id": "unique-request-id",
-        "method": "textDocument/didOpen",
-        "params": {
-          // ... method-specific parameters
+*   **Request Body**: Standard MCP Request Payload (JSON).
+    *   Clients will use `gatewayToolName`s (e.g., `serverAlias_originalToolName`) when specifying tool names in requests like `tools/call`.
+    *   Example (`tools/list`):
+        ```json
+        {
+          "jsonrpc": "2.0",
+          "id": "req-123",
+          "method": "tools/list",
+          "params": {}
         }
-      }
-      ```
-- **Response**: Standard MCP Response Payload (JSON) from the target server.
-    - Example:
-      ```json
-      {
-        "mcp_version": "1.0",
-        "request_id": "unique-request-id",
-        "result": {
-          // ... method-specific result
-        },
-        "error": null // or error object if applicable
-      }
-      ```
-- **Authentication**:
-    - The MCP Gateway API itself might require an API key for access, distinct from any authentication the target MCP server might require. This is to protect the gateway.
-    - The request body forwarded to the target MCP server might also contain its own authentication tokens as per the MCP specification and the server's requirements. MCP Pro will pass these through.
-- **Permissions**: Requires authentication (API key for the gateway).
+        ```
+    *   Example (`tools/call` using a gateway-resolved tool name):
+        ```json
+        {
+          "jsonrpc": "2.0",
+          "id": "req-124",
+          "method": "tools/call",
+          "params": {
+            "name": "myWeatherService_get_current_weather", // Example gatewayToolName
+            "arguments": {
+              "location": "London"
+            }
+          }
+        }
+        ```
+*   **Response**: Standard MCP Response Payload (JSON) from the Centralized Gateway.
+    *   For `tools/list`, the response will contain tools with `gatewayToolName`s.
+    *   Example (successful `tools/call` response):
+        ```json
+        {
+          "jsonrpc": "2.0",
+          "id": "req-124",
+          "result": {
+            "temperature": "15°C",
+            "condition": "Cloudy"
+            // ... other tool-specific results
+          }
+        }
+        ```
+*   **Authentication**: Requires client authentication to MCP Pro (e.g., via an API Key passed in headers, managed by `ApiKeyService`). This is distinct from any authentication MCP Pro uses to connect to downstream servers.
+*   **Permissions**: Requires a valid API key with permissions to access the MCP Gateway.
+*   **Functionality**: This endpoint allows clients to:
+    *   Discover aggregated tools using `tools/list`.
+    *   Execute tools using `tools/call` (the gateway handles routing to the correct downstream server).
+    *   Interact with other aggregated MCP capabilities as they are supported (e.g., prompts, resources).
+
+### Direct Downstream Server Proxy Endpoint (Legacy/Deprecated)
+
+**`POST /mcp/{serverId}`**
+
+This endpoint provides direct proxy access to a specific managed MCP server, identified by `serverId`.
+
+*   **Status:** This endpoint is considered **legacy** or **deprecated** in favor of the new `POST /mcp/gateway` endpoint for most client interactions. It may be maintained for specific administrative, diagnostic, or backward-compatibility purposes, but new development should primarily target the centralized gateway.
+*   **Path Parameters**:
+    *   `serverId` (string, required): The ID of the target managed MCP server.
+*   **Request Body**: Standard MCP Request Payload (JSON).
+    *   Tool names and other identifiers in the request should be the *original* names as understood by the downstream server.
+*   **Response**: Standard MCP Response Payload (JSON) directly from the target downstream server.
+*   **Authentication**:
+    *   Requires client authentication to MCP Pro (e.g., API Key).
+    *   MCP Pro uses the configured credentials for the specified `serverId` to authenticate to the downstream server if required.
+*   **Permissions**: Requires a valid API key with permissions to access the MCP Gateway and potentially specific permissions per `serverId` if granular control is implemented.

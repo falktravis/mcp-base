@@ -1,6 +1,7 @@
 // This service will manage the lifecycle and connections to all downstream MCP servers
 
 import { v4 as uuidv4 } from 'uuid';
+import { EventEmitter } from 'events';
 import db from '../config/database'; // pg.Pool instance
 import { ManagedMcpServer } from 'shared-types/db-models';
 import { 
@@ -18,17 +19,18 @@ import {
 import { McpConnectionWrapper, ServerInitiatedMessageCallback } from './McpConnectionWrapper'; // Changed ForwardMessageCallback to ServerInitiatedMessageCallback
 import { DevWatcher } from './DevWatcher';
 import { spawn, ChildProcess } from 'child_process';
+import { Tool } from '@modelcontextprotocol/sdk/types.js'; // Added import for Tool
 
 // Placeholder for a more sophisticated logging solution
 const logger = console;
 
-export class ManagedServerService {
+export class ManagedServerService extends EventEmitter {
   private serverConnections: Map<string, McpConnectionWrapper> = new Map();
   private devWatcher: DevWatcher | null = null;
   // private forwardMessageCallback?: ForwardMessageCallback; // Old callback type
   private serverInitiatedMessageCallback?: ServerInitiatedMessageCallback; // New callback type
-
   constructor(isDevMode: boolean = false /*, forwardMessageCallback?: ForwardMessageCallback */) { // Removed old callback from constructor params
+    super();
     if (isDevMode) {
       this.devWatcher = new DevWatcher();
       logger.info('[ManagedServerService] Development mode enabled. DevWatcher initialized.');
@@ -180,10 +182,17 @@ export class ManagedServerService {
         stdioProcess, 
         this.serverInitiatedMessageCallback // Pass the new callback
     );
-    
-    connectionWrapper.on('statusChange', (status, serverId, details) => {
+      connectionWrapper.on('statusChange', (status, serverId, details) => {
       logger.info(`[ManagedServerService] Server ${serverId} status changed to ${status}. Details: ${details || 'N/A'}`);
       this.updateServerStatusInDb(serverId, status, details);
+      // Emit event for CentralGatewayMCPService
+      this.emit('serverStatusChanged', serverId, status, details);
+    });
+
+    connectionWrapper.on('toolsChanged', (serverId, tools) => {
+      logger.info(`[ManagedServerService] Tools changed for server ${serverId}: ${tools.length} tools available`);
+      // Emit event for CentralGatewayMCPService
+      this.emit('toolsChanged', serverId, tools);
     });
 
     connectionWrapper.on('error', (error, serverId) => {
@@ -238,9 +247,7 @@ export class ManagedServerService {
     const serverDetails = servers.map((s: any) => {
         const serverModel = this.mapDbRowToManagedMcpServer(s);
         return serverModel ? this.mapManagedMcpServerToDetails(serverModel) : null;
-    }).filter(Boolean) as ManagedMcpServerDetails[];
-
-    return {
+    }).filter(Boolean) as ManagedMcpServerDetails[];    return {
       items: serverDetails,
       total,
       page,
@@ -248,14 +255,39 @@ export class ManagedServerService {
     };
   }
 
-  public async getServerById(serverId: string): Promise<ManagedMcpServerDetails | null> {
+  /**
+   * Get all managed servers as database models (for internal use)
+   * Used by CentralGatewayMCPService for tool aggregation
+   */
+  public async getAllManagedServers(): Promise<ManagedMcpServer[]> {
+    try {
+      const result = await db.query('SELECT * FROM managed_mcp_server ORDER BY name ASC');
+      const servers: any[] = result.rows;
+      return servers.map((s: any) => this.mapDbRowToManagedMcpServer(s)).filter(Boolean) as ManagedMcpServer[];
+    } catch (error) {
+      logger.error('[ManagedServerService] Error getting all managed servers:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get a server by ID (internal use)
+   */
+  private async getServer(serverId: string): Promise<ManagedMcpServer | null> {
     const result = await db.query('SELECT * FROM managed_mcp_server WHERE id = $1', [serverId]);
     const serverRow: any = result.rows[0];
     if (!serverRow) {
       return null;
     }
-    const serverModel = this.mapDbRowToManagedMcpServer(serverRow);
-    return serverModel ? this.mapManagedMcpServerToDetails(serverModel) : null;
+    return this.mapDbRowToManagedMcpServer(serverRow);
+  }
+
+  /**
+   * Get a server by ID with details
+   */
+  public async getServerById(serverId: string): Promise<ManagedMcpServerDetails | null> {
+    const server = await this.getServer(serverId);
+    return server ? this.mapManagedMcpServerToDetails(server) : null;
   }
   
   public async getServerConfigForConnection(serverId: string): Promise<ManagedMcpServer | null> {
@@ -383,6 +415,20 @@ export class ManagedServerService {
     connectionWrapper.stop(); 
   }
 
+  /**
+   * Get the count of currently active (connected) servers
+   */
+  public getActiveServerCount(): number {
+    let count = 0;
+    for (const [_, connection] of this.serverConnections) {
+      const status = connection.getStatus().status;
+      if (status === 'running' || status === 'starting') {
+        count++;
+      }
+    }
+    return count;
+  }
+
   public async getServerStatus(serverId: string): Promise<ServerStatusResponse | null> {
     const connectionWrapper = this.serverConnections.get(serverId);
     if (connectionWrapper) {
@@ -485,8 +531,7 @@ export class ManagedServerService {
       logger.info(`[ManagedServerService] Received response for MCP request (ID: ${request.request_id}) from server ${serverId}`);
       return response;
     } catch (error: any) {
-      logger.error(`[ManagedServerService] Error proxying MCP request to server ${serverId}:`, error);
-      return {
+      logger.error(`[ManagedServerService] Error proxying MCP request to server ${serverId}:`, error);      return {
         mcp_version: request.mcp_version || '1.0',
         request_id: request.request_id,
         error: {
@@ -496,6 +541,13 @@ export class ManagedServerService {
         },
       };
     }
+  }
+
+  /**
+   * Forward a request to a specific server (simplified interface for CentralGatewayMCPService)
+   */
+  public async forwardRequestToServer(serverId: string, request: McpRequestPayload): Promise<McpResponsePayload> {
+    return this.proxyMcpRequest(serverId, request);
   }
 
   /**
@@ -540,5 +592,14 @@ export class ManagedServerService {
     await db.query(insertQuery, params);
     this.createAndConnectServer(serverConfig, false);
     return this.mapManagedMcpServerToDetails(serverConfig, 'stopped');
+  }
+
+  public async listTools(serverId: string): Promise<Tool[]> {
+    const connectionWrapper = this.serverConnections.get(serverId);
+    if (connectionWrapper) {
+      return connectionWrapper.getCachedTools();
+    }
+    logger.warn(`[ManagedServerService] listTools called for server ${serverId}, but no active connection wrapper found.`);
+    return [];
   }
 }

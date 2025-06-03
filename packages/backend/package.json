@@ -10,7 +10,9 @@
     "start": "node dist/index.js",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"src/**/*.ts\""
-  },  "dependencies": {
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "bcrypt": "^6.0.0",
     "chokidar": "^4.0.3",
     "dotenv": "^16.0.0",

@@ -19,8 +19,8 @@ const app: Express = express();
 const port: number = parseInt(process.env.PORT ? process.env.PORT : '') || 3001;
 
 // Middleware
-app.use(express.json()); // For parsing application/json
-app.use(express.urlencoded({ extended: true })); // For parsing application/x-www-form-urlencoded
+// app.use(express.json()); // REMOVED: Global JSON parser - will be applied selectively
+// app.use(express.urlencoded({ extended: true })); // REMOVED: Global URLencoded parser - will be applied selectively
 
 // Basic CORS middleware (consider using the 'cors' package for more options)
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -67,14 +67,22 @@ async function main() {
     managedServerService, 
     apiKeyService,
     trafficMonitoringService
-  );
+  );  // 3. Instantiate McpGatewayController (which will automatically set up the SSE delegate)
+  
+  // Ensure CentralGatewayMCPService is initialized before controllers that depend on its transport
+  try {
+    await centralGatewayService.initialize();
+    console.log(`[Index] CentralGatewayMCPService (Instance: ${centralGatewayService.instanceId}) initialized. Service Ready: ${centralGatewayService.isReady()}`);
+    if (!centralGatewayService.isReady()) {
+      console.error(`[Index] FATAL: CentralGatewayMCPService (Instance: ${centralGatewayService.instanceId}) .initialize() completed but service is NOT ready. Aborting.`);
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error(`[Index] Failed to initialize CentralGatewayMCPService (Instance: ${centralGatewayService.instanceId}):`, error);
+    process.exit(1); // Exit if gateway service essential for MCP routes fails
+  }
 
-  // 3. Instantiate McpGatewayController
   const mcpGatewayController = new McpGatewayController(centralGatewayService);
-
-  // 4. Set the SSE Send Delegate on CentralGatewayMCPService
-  // This allows CentralGatewayMCPService to call McpGatewayController to send SSE messages.
-  centralGatewayService.setSseSendDelegate(mcpGatewayController.forwardMessageToClientSession.bind(mcpGatewayController));
 
   const marketplaceService = new MarketplaceService(managedServerService);
 
@@ -89,7 +97,8 @@ async function main() {
   const mcpApiRoutes = require('./routes/mcpApi').default(mcpGatewayController);
 
   // API Routes
-  app.use('/api/management', managementApiRoutes);
+  // Apply body parsers only to the management API routes
+  app.use('/api', express.json(), express.urlencoded({ extended: true }), managementApiRoutes);
   app.use('/mcp', mcpApiRoutes);
   app.listen(port, '0.0.0.0', () => {
     console.log(`Backend server is listening on port ${port}`);

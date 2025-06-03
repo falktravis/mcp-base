@@ -2,11 +2,11 @@
 
 # --- Variables ---
 @host = http://localhost:3001
-@managementApiBasePath = /api/management
-@mcpGatewayBasePath = /mcp
+@managementApiBasePath = /api
+@mcpGatewayBasePath = /mcp/gateway
 
 # --- Authentication (Uncomment and set if needed) ---
-# @apiKey = YOUR_API_KEY_HERE
+@apiKey = YOUR_API_KEY_HERE
 # @bearerToken = Bearer {{apiKey}}
 
 # --- Marketplace Server ID (Set this after installing from marketplace) ---
@@ -15,6 +15,17 @@
 
 # --- Installed Server ID (Set this from the response of the install request) ---
 @installedServerId = 1e74ba7e-e30b-40cb-9055-356895dd11e9
+
+# --- Gateway Tool Prefix (Derived from @installedServerId by removing hyphens and lowercasing) ---
+# Example: if @installedServerId is '1e74ba7e-e30b-40cb-9055-356895dd11e9',
+# then @gatewayToolPrefix is '1e74ba7ee30b40cb9055356895dd11e9' (hyphens removed).
+# This must match how CentralGatewayMCPService generates it (server.name or server.id, processed).
+# Adjust if your server has a 'name' field that results in a different prefix,
+# or if the ID used by the gateway for prefixing is different.
+@gatewayToolPrefix = 1e74ba7ee30b40cb9055356895dd11e9
+
+# --- GUID for Initialize Request ---
+@init_guid = {{$guid}}
 
 
 ### 1. Install Server from Marketplace
@@ -34,20 +45,39 @@ Content-Type: application/json
 
 {}
 
-### 3. Test MCP Gateway - Resolve Library ID
-# Requires @installedServerId to be set and the server to be running.
-# Uncomment Authorization header if auth is enabled for the gateway.
-POST {{host}}{{mcpGatewayBasePath}}/{{installedServerId}}/mcp
+### 3a. Initialize Session with Gateway
+# This request authenticates with the gateway and establishes a session.
+# Requires @apiKey to be uncommented and set.
+# @name: initGatewaySession
+POST {{host}}{{mcpGatewayBasePath}}
 Content-Type: application/json
-# Authorization: {{bearerToken}}
+Accept: application/json, text/event-stream
 
 {
-    "mcp_version": "1.0",
-    "tool_name": "resolve-library-id",
-    "tool_input": {
-        "libraryName": "react"
+    "jsonrpc": "2.0",
+    "method": "initialize",
+    "params": {},
+    "id": "{{init_guid}}"
+}
+
+### 3b. Test MCP Gateway - Resolve Library ID
+# Requires successful execution of "3a. Initialize Session with Gateway".
+# Uses the sessionId obtained from the initialize request.
+# Tool name is prefixed based on the server managing 'resolve-library-id'.
+POST {{host}}{{mcpGatewayBasePath}}
+Content-Type: application/json
+X-MCP-Session-ID: {{initGatewaySession.response.body.result.sessionId}}
+
+{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+        "name": "{{gatewayToolPrefix}}__resolve-library-id",
+        "arguments": {
+            "libraryName": "react"
+        }
     },
-    "request_id": "{{$guid}}"
+    "id": "{{$guid}}"
 }
 
 ### 4. Get Server Status
